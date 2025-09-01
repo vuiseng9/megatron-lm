@@ -1,5 +1,7 @@
 <div align="center">
 
+## Please see [./vs-notes.md](./vs-notes.md).
+
 Megatron-LM & Megatron Core
 ===========================
 <h4>GPU-optimized library for training transformer models at scale</h4>
