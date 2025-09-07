@@ -1,6 +1,6 @@
 import os
 from datasets import load_dataset
-dataset_name = "stas/openwebtext-10k"
+dataset_name = "vuiseng9/openwebtext-10k"
 name = dataset_name.split('/')[-1]
 
 os.makedirs('./owt-ds', exist_ok=True)
