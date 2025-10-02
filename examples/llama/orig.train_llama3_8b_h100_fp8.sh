@@ -9,14 +9,10 @@ export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
 #export NCCL_P2P_NET_CHUNKSIZE=${NCCL_P2P_NET_CHUNKSIZE:-2097152}
 #export NCCL_AVOID_RECORD_STREAMS=${NCCL_AVOID_RECORD_STREAMS:-1}
 
-RUNDIR="./sandbox_run"
-CHECKPOINT_PATH=${1:-"${RUNDIR}/checkpoints/llama3_8b_fp8"}
-TENSORBOARD_LOGS_PATH=${2:-"${RUNDIR}/tensorboard_logs/llama3_8b_fp8"}
+CHECKPOINT_PATH=${1:-"checkpoints/llama3_8b_fp8"}
+TENSORBOARD_LOGS_PATH=${2:-"tensorboard_logs/llama3_8b_fp8"}
 TOKENIZER_ARG=${3:-"MOCK"} # Path to tokenizer model, or "MOCK"
 DATA_ARG=${4:-"MOCK"}     # Data prefix, or "MOCK"
-
-MLMROOT="../../"
-export PYTHONPATH=$MLMROOT:$PYTHONPATH
 
 # Create directories if they don't exist
 mkdir -p "$(dirname "$CHECKPOINT_PATH")"
@@ -31,7 +27,7 @@ NODE_RANK=${NODE_RANK:-0}
 WORLD_SIZE=$(($GPUS_PER_NODE*$NUM_NODES))
 
 # Path to the pretrain_gpt.py script, assuming this script is run from the root of the Megatron-LM repository
-PRETRAIN_SCRIPT_PATH="${MLMROOT}/pretrain_gpt.py"
+PRETRAIN_SCRIPT_PATH="pretrain_gpt.py"
 
 # Fixed model and training parameters
 TP_SIZE=1     
@@ -41,11 +37,11 @@ MICRO_BATCH_SIZE=1
 GLOBAL_BATCH_SIZE=128
 NUM_LAYERS=32  
 DTYPE="fp8"
-SEQ_LENGTH=4096
-MAX_POSITION_EMBEDDINGS=4096
+SEQ_LENGTH=8192
+MAX_POSITION_EMBEDDINGS=8192
 
 # Data cache path (useful for both mock and real data)
-DATA_CACHE_PATH="${RUNDIR}/benchmark_cache_llama3_8b_fp8"
+DATA_CACHE_PATH="${PWD}/benchmark_cache_llama3_8b_fp8"
 mkdir -p "$DATA_CACHE_PATH"
 
 DISTRIBUTED_ARGS=(
@@ -138,7 +134,6 @@ DATA_ARGS_LIST=()
 if [[ "$TOKENIZER_ARG" == "MOCK" ]] || [[ "$DATA_ARG" == "MOCK" ]] || [[ -z "$TOKENIZER_ARG" ]]; then
     DATA_ARGS_LIST+=(
         "--mock-data"
-        "--train-samples 10000"
         "--tokenizer-type NullTokenizer"
         "--vocab-size 128256" 
         "--data-cache-path ${DATA_CACHE_PATH}"
@@ -186,16 +181,6 @@ if [ ! -f "$PRETRAIN_SCRIPT_PATH" ]; then
     echo "Please ensure you are running this script from the root of the Megatron-LM repository, and pretrain_gpt.py is present."
     exit 1
 fi
-
-echo "Executing..."
-echo "torchrun ${DISTRIBUTED_ARGS[@]} \
-    "$PRETRAIN_SCRIPT_PATH" \
-    ${MODEL_ARGS[@]} \
-    ${TRAINING_ARGS[@]} \
-    ${DTYPE_ARGS[@]} \
-    ${MODEL_PARALLEL_ARGS[@]} \
-    ${DATA_ARGS_LIST[@]} \
-    ${EVAL_AND_LOGGING_ARGS[@]}"
 
 # Run the training command
 torchrun ${DISTRIBUTED_ARGS[@]} \
