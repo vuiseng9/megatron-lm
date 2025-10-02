@@ -19,7 +19,7 @@
                 "--node_rank", "0",
                 "--master_addr", "localhost",
                 "--master_port", "6000",
-                "../../pretrain_gpt.py",
+                "../..//pretrain_gpt.py",
                 "--use-mcore-models",
                 "--num-layers", "32",
                 "--hidden-size", "4096",
@@ -28,8 +28,8 @@
                 "--group-query-attention",
                 "--num-query-groups", "8",
                 "--kv-channels", "128",
-                "--seq-length", "8192",
-                "--max-position-embeddings", "8192",
+                "--seq-length", "4096",
+                "--max-position-embeddings", "4096",
                 "--position-embedding-type", "rope",
                 "--rotary-base", "1000000",
                 "--rotary-percent", "1.0",
@@ -43,7 +43,7 @@
                 "--disable-bias-linear",
                 "--micro-batch-size", "1",
                 "--global-batch-size", "128",
-                "--train-samples", "1953125000",
+                "--train-samples", "10000",
                 "--lr-decay-samples", "1949218748",
                 "--lr-warmup-samples", "3906252",
                 "--lr", "0.00015",
@@ -75,7 +75,7 @@
                 "--mock-data",
                 "--tokenizer-type", "NullTokenizer",
                 "--vocab-size", "128256",
-                "--data-cache-path", "/root/work/dev/mlm/megatron-lm/examples/llama/benchmark_cache_llama3_8b_fp8",
+                "--data-cache-path", "./sandbox_run/benchmark_cache_llama3_8b_fp8",
                 "--tiktoken-pattern", "v2",
                 "--split", "99,1,0",
                 "--no-create-attention-mask-in-dataloader",
@@ -91,12 +91,11 @@
                 "--profile-step-end", "6",
                 "--ckpt-format", "torch_dist",
                 "--distributed-timeout-minutes", "60",
-                "--save", "checkpoints/llama3_8b_fp8",
-                "--load", "checkpoints/llama3_8b_fp8",
-                "--tensorboard-dir", "tensorboard_logs/llama3_8b_fp8"
+                "--save", "./sandbox_run/checkpoints/llama3_8b_fp8",
+                "--load", "./sandbox_run/checkpoints/llama3_8b_fp8",
+                "--tensorboard-dir", "./sandbox_run/tensorboard_logs/llama3_8b_fp8"
             ]
         },
-
         {
             "name": "gpt3_345m_debug",
             "type": "debugpy",
