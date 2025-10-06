@@ -65,10 +65,13 @@
                 "--use-distributed-optimizer",
                 "--overlap-grad-reduce",
                 "--overlap-param-gather",
-                "--fp8-format", "hybrid",
-                "--fp8-amax-history-len", "1024",
-                "--fp8-amax-compute-algo", "max",
-                "--fp8-param-gather",
+                "--fp8-recipe", "mxfp8",
+                "--fp8-format", "e4m3",             
+                // "--no-fp8-wgrad",        // to test
+                // "--fp8-format", "hybrid",          // delayed scaling
+                // "--fp8-amax-history-len", "1024",  // delayed scaling
+                // "--fp8-amax-compute-algo", "max",  // delayed scaling
+                // "--fp8-param-gather",              // delayed scaling
                 "--tensor-model-parallel-size", "1",
                 "--context-parallel-size", "1",
                 "--sequence-parallel",

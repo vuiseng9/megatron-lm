@@ -958,6 +958,27 @@ def get_model(model_provider_func, model_type=ModelType.encoder_or_decoder, wrap
             kwargs['average_in_collective'] = args.ddp_average_in_collective
             if args.use_megatron_fsdp and args.use_precision_aware_optimizer:
                 kwargs["preserve_fp32_weights"] = False
+            if False:
+                keys = [
+                    "average_in_collective",
+                    "check_for_large_grads",
+                    "check_for_nan_in_grad",
+                    "data_parallel_sharding_strategy",
+                    "fsdp_double_buffer",
+                    "grad_reduce_in_fp32",
+                    "keep_fp8_transpose_cache_when_using_custom_fsdp",
+                    "nccl_ub",
+                    "overlap_grad_reduce",
+                    "overlap_param_gather"
+                ]
+                missing_keys = []
+                for k in keys:
+                    if k in kwargs:
+                        print(f"{k}: {kwargs[k]}")
+                    else:
+                        missing_keys.append(k)
+                for k in missing_keys:
+                    print(f"!! {k} not found in DDP config kwargs")
             ddp_config = DistributedDataParallelConfig(**kwargs)
 
             # In the Megatron FSDP and DDP use path, we need to initialize the bucket size.
