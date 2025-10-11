@@ -31,6 +31,7 @@ Based on [ootb examples](https://github.com/vuiseng9/megatron-lm/blob/main/examp
 1. Setup.
     * `d-nv-run -v /root/work:/root/work nvcr.io/nvidia/pytorch:25.06-py3`
     * `git clone https://github.com/vuiseng9/megatron-lm && cd megatron-lm && git checkout 250901-ootb`, no installation required. Do remember to configure PYTHONPATH to include `<pathto>/megatron-lm`
+    * If you use vscode, you may find `megatron-lm/examples/gpt3/vscode/*.json` handy.
     * active directory `megatron-lm/examples/gpt3`, we use Makefile to capture steps to reproduce.
     * `make install-dependencies` 
 2. Tiny dataset preparation (I forgot where I reference/cross-reference it). 
@@ -42,7 +43,7 @@ Based on [ootb examples](https://github.com/vuiseng9/megatron-lm/blob/main/examp
     * `make train-gpt3-345m-1gpu-x-model-parallelism`
     * `code --diff train_gpt3_175b_distributed.sh 00_train_gpt3_345m.sh` Review changes to ootb launch script.
 
-### Tinkering Model Parallelism with GPT2-large (775M)
+### Tinkering Training Parallelism with GPT2-XL (1.5B)
 
 |label     |#param|#txblk|#embeding|#heads|
 |-         |-     |-     |-        |-     |
@@ -50,42 +51,64 @@ Based on [ootb examples](https://github.com/vuiseng9/megatron-lm/blob/main/examp
 |gpt2-xl   |1.5B  |48    |1600     |25    |
 Both uses 1024 context length. 4x MLP expansion.
 
-Following experiments are intended setup of 2xGPU with > 80GB, uses nvlink, we use 2xH200 and above. We are gonna start by ablating the parallelism dimension before combining them. 
+We choose 1.5B to align to ZeRO paper discussion.
 
-1. `Global batch size = micro batch size * gradient accumulation steps * data parallel size`. We skip gradient accumulation steps for now. Gradient accumulation steps is automatically calculated if we set micro-batch-size and global-batch-size. That means we need to set global batch size and micro-batch-size, as well as data parallel size. Data parallel size in simple term is number of model replicas. As we start by 1xGPU, data parallel size is 1, keeping accumulation steps to 1. It entails global batch size = micro-batch-size. 
+[to Rewrite] Following experiments are intended setup of 2xGPU with > 80GB, uses nvlink, we use 2xH200 and above. We are gonna start by ablating the parallelism dimension before combining them. 
 
-1. **Baseline**: `make train-baseline-gpt2-large-1gpu` 1x GPU, no model parallelism, micro-batch-size=global-batch-size=32 (no accumulate gradient). We size it such that it is around 80GB.
-    * expected logs:
+1. Megatron's design: 
+    * `Global batch size (gbs) = micro batch size (mbs) * gradient accumulation steps * data parallel size`. Gradient accumulation steps is automatically calculated if we are required to set `--micro-batch-size` and `global-batch-size`, as well as `data parallel size`. Data parallel size in simple term is number of model replicas. As we start by 1xGPU, data parallel size is 1, keeping accumulation steps to 1. It entails global batch size = micro-batch-size. 
+    * How to configure parallelism?
+        * `WORLD_SIZE = NNODES * GPUS_PER_NODE =  DP * TP * PP * EP`
+        * Replica is automatically derived from WORLD_SIZE / (TP * PP * EP)
+        * User set `NNODES, GPUS_PER_NODE`, `TP`, `PP`, `EP` to let mlm derive `DP`.
+
+1. **Warm-up**: `make gpt2-xl-1gpu-bs1` 1x GPU, with no model parallelism, gbs=1, mbs=1. We size it such that it is around 80GB.
+    * Key takeaways from logs below:
+        1. #parameters per intention: ~1.5B
+        1. Theoretical memory footprints: weight and optimizer=26699.47 MB; this is close to ZeRO paper's discussion ("at least 24GB"). TODO: verify that weights and gradients are BF16, optimizer's weight copy in FP32, momentum, FP32, variance, FP32. 16B per parameter.
+        1. With batch size of 1, it is consuming >=33GB of GPU memory, which overflows V100 to begin with.
+        1. Question: why there is grad norm? just compute but not used?
     ```bash
-    [before the start of training step] datetime: 2025-09-07 23:53:58 
-    Number of parameters in transformer block in billions:  0.71
-    Number of parameters in embedding layers in billions: 0.06
-    Total number of parameters in billions: 0.77
-    Number of parameters in most loaded shard in billions: 0.7724
+    Number of parameters in transformer block in billions:  1.47
+    Number of parameters in embedding layers in billions: 0.08
+    Total number of parameters in billions: 1.56
+    Number of parameters in most loaded shard in billions: 1.5554
+    compute_activation_memory_without_sp
+    Activation memory footprint per transformer layer (precise, without SP): 53.1 MB
+    Theoretical memory footprints: weight and optimizer=26699.47 MB, activation=2785.59 MB, total=29485.06 MB
     ```
     ```
-    dc-h200x2       Sun Sep  7 23:57:26 2025  580.82.07
-    [0] NVIDIA H200 | 60°C, 100 % | 80161 / 143771 MB | root(80154M)
-    [1] NVIDIA H200 | 26°C,   0 % |     3 / 143771 MB |
+    h100x4                    Sat Oct 11 18:11:04 2025  580.82.07
+    [0] NVIDIA H100 80GB HBM3 | 38°C,  53 % | 33321 / 81559 MB | root(33314M)
+    [1] NVIDIA H100 80GB HBM3 | 27°C,   0 % |     3 / 81559 MB |
+    [2] NVIDIA H100 80GB HBM3 | 30°C,   0 % |     3 / 81559 MB |
+    [3] NVIDIA H100 80GB HBM3 | 26°C,   0 % |     3 / 81559 MB |
     ```
     * take note of elapse time per iteration (gradient update step)
     ```
-    [2025-09-07 23:58:47] iteration      609/  500000 | consumed samples:        19488 | elapsed time per iteration (ms): 438.3 | learning rate: 5.999998E-05 | global batch size:    32 | lm loss: 6.159759E+00 | loss scale: 131072.0 | grad norm: 1.095 | number of skipped iterations:   0 | number of nan iterations:   0 |
-    [2025-09-07 23:58:47] iteration      610/  500000 | consumed samples:        19520 | elapsed time per iteration (ms): 436.7 | learning rate: 5.999998E-05 | global batch size:    32 | lm loss: 6.002230E+00 | loss scale: 131072.0 | grad norm: 0.791 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 18:11:22] iteration      311/  500000 | consumed samples:          311 | elapsed time per iteration (ms): 179.8 | learning rate: 4.339535E-05 | global batch size:     1 | lm loss: 7.220541E+00 | loss scale: 1.0 | grad norm: 6.003 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 18:11:22] iteration      312/  500000 | consumed samples:          312 | elapsed time per iteration (ms): 180.1 | learning rate: 4.353488E-05 | global batch size:     1 | lm loss: 7.169382E+00 | loss scale: 1.0 | grad norm: 9.685 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 18:11:22] iteration      313/  500000 | consumed samples:          313 | elapsed time per iteration (ms): 179.9 | learning rate: 4.367442E-05 | global batch size:     1 | lm loss: 7.093079E+00 | loss scale: 1.0 | grad norm: 2.775 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 18:11:22] iteration      314/  500000 | consumed samples:          314 | elapsed time per iteration (ms): 180.9 | learning rate: 4.381395E-05 | global batch size:     1 | lm loss: 7.408157E+00 | loss scale: 1.0 | grad norm: 2.889 | number of skipped iterations:   0 | number of nan iterations:   0 |
     ```
-1. **Data Parallel**: `make train-dp2-gpt2-large-2gpu`. How to configure data parallelism?
-    * WORLD_SIZE = NNODES * GPUS_PER_NODE =  DP * TP * PP * EP
-    * Replica is automatically derived from WORLD_SIZE / (TP * PP * EP)
-    * for this experiment, we just set `nproc-per-node=2 and global batch size to 32x2` and no model parallelism, so DP=2, TP=1, PP=1, EP=1. Replica = 2/1 = 2.
-    * Expected outcomes:
+1. **Vanilla Data Parallel**: `make 110-gpt2-xl-ddp-4gpus-gbs4`. 
+    * Key takeaways from logs below:
+        1. Memory usage per card is about the same as before because one replica per gpu, mbs=1, gbs=4.
+        1. elapsed time per iteration is ~250ms, as opposed to ~180ms before, because of gradient synchronization during optimizer update step.
+        1. Exercise for you: make the single card to gbs=4, what is the elapse time per iteration and memory usage? (it should be around 189.1ms, just slight higher because no gradient synchronization overhead, no communication over nvlink/internet. Memory usage should be around 43GB, because of larger batch size)
+        1. TODO: find out where and how gradient synchronization is implemented in megatron-lm.
     ```
-    [0] NVIDIA H200 | 59°C,  93 % | 80543 / 143771 MB | root(80536M)
-    [1] NVIDIA H200 | 58°C,  88 % | 80543 / 143771 MB | root(80536M)
+    h100x4                    Sat Oct 11 18:37:10 2025  580.82.07
+    [0] NVIDIA H100 80GB HBM3 | 46°C,  30 % | 33803 / 81559 MB | root(33796M)
+    [1] NVIDIA H100 80GB HBM3 | 41°C,  74 % | 33811 / 81559 MB | root(33804M)
+    [2] NVIDIA H100 80GB HBM3 | 47°C,  18 % | 33811 / 81559 MB | root(33804M)
+    [3] NVIDIA H100 80GB HBM3 | 40°C,  25 % | 33811 / 81559 MB | root(33804M)
     ```
     Constant elapse time per iteration as baseline.
     ```
-    [2025-09-08 00:19:09] iteration       26/  500000 | consumed samples:         1664 | elapsed time per iteration (ms): 436.9 | learning rate: 1.395349E-06 | global batch size:    64 | lm loss: 1.029183E+01 | loss scale: 131072.0 | grad norm: 7.831 | number of skipped iterations:   0 | number of nan iterations:   0 |
-    [2025-09-08 00:19:09] iteration       27/  500000 | consumed samples:         1728 | elapsed time per iteration (ms): 437.5 | learning rate: 1.534884E-06 | global batch size:    64 | lm loss: 1.026151E+01 | loss scale: 131072.0 | grad norm: 6.683 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 18:38:41] iteration     1384/  500000 | consumed samples:         5536 | elapsed time per iteration (ms): 251.6 | learning rate: 5.999934E-05 | global batch size:     4 | lm loss: 6.302687E+00 | loss scale: 1.0 | grad norm: 1.591 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 18:38:41] iteration     1385/  500000 | consumed samples:         5540 | elapsed time per iteration (ms): 250.4 | learning rate: 5.999934E-05 | global batch size:     4 | lm loss: 6.263545E+00 | loss scale: 1.0 | grad norm: 1.350 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 18:38:42] iteration     1386/  500000 | consumed samples:         5544 | elapsed time per iteration (ms): 250.3 | learning rate: 5.999934E-05 | global batch size:     4 | lm loss: 6.166680E+00 | loss scale: 1.0 | grad norm: 1.392 | number of skipped iterations:   0 | number of nan iterations:   0 |
     ```
     This pretrain script has fixed the gradient update steps, means with 2xglobal batch size, it is effectively 2x more epochs.
 

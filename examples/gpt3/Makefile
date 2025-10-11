@@ -19,11 +19,11 @@ prepare-ds-openwebtext-10k:
 		--workers $(shell nproc) \
 		--append-eod
 
-train-gpt3-345m-1gpu-x-model-parallelism:
-	bash ./00_train_gpt3_345m.sh
+100-gpt2-xl-1gpu-bs1:
+	bash ./100_gpt2xl_1gpu_bf16.sh
 
-train-baseline-gpt2-large-1gpu:
-	bash ./100_train_gpt2_large.sh
+110-gpt2-xl-ddp-4gpus-gbs4:
+	bash ./110_gpt2xl_ddp_4gpus_gbs4.sh
 
 train-dp2-gpt2-large-2gpu:
 	bash ./101_train_gpt2_large_dp2.sh
