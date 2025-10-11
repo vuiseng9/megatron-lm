@@ -65,9 +65,9 @@ We choose 1.5B to align to ZeRO paper discussion.
 1. **Warm-up**: `make gpt2-xl-1gpu-bs1` 1x GPU, with no model parallelism, gbs=1, mbs=1. We size it such that it is around 80GB.
     * Key takeaways from logs below:
         1. #parameters per intention: ~1.5B
-        1. Theoretical memory footprints: weight and optimizer=26699.47 MB; this is close to ZeRO paper's discussion ("at least 24GB"). TODO: verify that weights and gradients are BF16, optimizer's weight copy in FP32, momentum, FP32, variance, FP32. 16B per parameter.
+        1. Theoretical memory footprints: weight and optimizer=26699.47 MB; this is close to ZeRO paper's discussion ("at least 24GB"). 
         1. With batch size of 1, it is consuming >=33GB of GPU memory, which overflows V100 to begin with.
-        1. Question: why there is grad norm? just compute but not used?
+        1. Important: based on our examination, it appears that the grad is stored in FP32 as opposed to 16-bit used in the paper. Therefore, it is 18B per element, 1.56*18=28.08GB. Other than gradient, we verified that weights are BF16, optimizer's weight copy in FP32, momentum, FP32, variance, FP32. 16B per parameter.
     ```bash
     Number of parameters in transformer block in billions:  1.47
     Number of parameters in embedding layers in billions: 0.08
@@ -76,6 +76,19 @@ We choose 1.5B to align to ZeRO paper discussion.
     compute_activation_memory_without_sp
     Activation memory footprint per transformer layer (precise, without SP): 53.1 MB
     Theoretical memory footprints: weight and optimizer=26699.47 MB, activation=2785.59 MB, total=29485.06 MB
+    ```
+    ```python
+    # megatron/training/theoretical_memory_usage.py
+    num_bytes_per_parameter = (
+        18 if not args.use_distributed_optimizer else 6 + (12 / args.data_parallel_size)
+    )
+    weight_and_optimizer_memory = (
+        num_parameters_on_most_loaded_model_shard * num_bytes_per_parameter
+    )
+
+    return weight_and_optimizer_memory
+    # !!! gradient is accounted
+    # if use_distributed_optimizer 6 + 12/dp, 6=2(param)+4(grad), 12(param_copy, momentum, var)
     ```
     ```
     h100x4                    Sat Oct 11 18:11:04 2025  580.82.07
@@ -95,7 +108,9 @@ We choose 1.5B to align to ZeRO paper discussion.
     * Key takeaways from logs below:
         1. Memory usage per card is about the same as before because one replica per gpu, mbs=1, gbs=4.
         1. elapsed time per iteration is ~250ms, as opposed to ~180ms before, because of gradient synchronization during optimizer update step.
-        1. Exercise for you: make the single card to gbs=4, what is the elapse time per iteration and memory usage? (it should be around 189.1ms, just slight higher because no gradient synchronization overhead, no communication over nvlink/internet. Memory usage should be around 43GB, because of larger batch size)
+        1. *Exercise for you*: make the single card script above to gbs=4, what is the elapse time per iteration and memory usage? (it should be around 189.1ms, just slight higher because no gradient synchronization overhead, no communication over nvlink/internet. Memory usage should be around 43GB, because of larger batch size)
+        1. *Exercise for you*: turn on `--overlap-grad-reduce`. What do you observe? (195-220ms per steps, better than 250ms, but not as good as 189.1ms because of comm overhead, overlapping just makes it more efficient. Mem. usage stucks at 33.8GB because no sharding involved, just async gradient communication).
+        1. *Exercise for you*: turn on `--overlap-param-gather `. (without actually running it, you should be able to deduce that this won't work because 1) no sharding happen yet, 2) nothing to gather, 3) the flag is a bit unclear, param here refers to the param copy in the optimizer, not the ones held in nn.module. If you run this, expect "AssertionError: --overlap-param-gather only supported with distributed optimizer or megatron fsdp").
         1. TODO: find out where and how gradient synchronization is implemented in megatron-lm.
     ```
     h100x4                    Sat Oct 11 18:37:10 2025  580.82.07
@@ -110,7 +125,33 @@ We choose 1.5B to align to ZeRO paper discussion.
     [2025-10-11 18:38:41] iteration     1385/  500000 | consumed samples:         5540 | elapsed time per iteration (ms): 250.4 | learning rate: 5.999934E-05 | global batch size:     4 | lm loss: 6.263545E+00 | loss scale: 1.0 | grad norm: 1.350 | number of skipped iterations:   0 | number of nan iterations:   0 |
     [2025-10-11 18:38:42] iteration     1386/  500000 | consumed samples:         5544 | elapsed time per iteration (ms): 250.3 | learning rate: 5.999934E-05 | global batch size:     4 | lm loss: 6.166680E+00 | loss scale: 1.0 | grad norm: 1.392 | number of skipped iterations:   0 | number of nan iterations:   0 |
     ```
-    This pretrain script has fixed the gradient update steps, means with 2xglobal batch size, it is effectively 2x more epochs.
+1. **ZeRO-2 (DP)**: `make 111-gpt2-xl-dp-zero2-4gpus-gbs4`. 
+    * Key takeaways from logs below:
+        1. Memory usage per card drops to 20.5GB from 33.8GB, about 1.65X reduction. This is end-to-end, including activation memory and temp buffer.
+        1. Theoretical weight and optimizer memory footprints drops to 13.3GB from 26.7GB.
+        1. Does it align to expectation? 
+            * baseline = 18 per parameter (2+4+K), (grad uses FP32 in megatron)
+            * DP=4 = (2+4+12/4) = 9 per parameter
+            * therefore, theoretical reduction = 18/9 = 2X of weight, grad and optimizer memory saving.
+            * not exactly answering but most likely correct, 2X without accounting activation and temp buffer, the number should be lower if we account them, 1.65X seems reasonable.
+        1. elapsed time per iteration is 177-205ms, as opposed to (195-220ms DDP with overlap grad reduce) before. [TODO] Why ZeRO-2 is faster? in theory, ZeRO-2 is at parity with DDP at best.
+        1. *exercise for you*: turn off `--overlap-*`, how much is the slow down?
+        1. TODO: find out where the comms are called and how ZeRO-2 is implemented in megatron-lm.
+    ```bash
+    Theoretical memory footprints: weight and optimizer=13349.73 MB, activation=2785.59 MB, total=16135.33 MB
+    ```
+    ```
+    h100x4                    Sat Oct 11 19:03:31 2025  580.82.07
+    [0] NVIDIA H100 80GB HBM3 | 36°C,  86 % | 20507 / 81559 MB | root(20500M)
+    [1] NVIDIA H100 80GB HBM3 | 35°C,  76 % | 20493 / 81559 MB | root(20486M)
+    [2] NVIDIA H100 80GB HBM3 | 38°C,  89 % | 20507 / 81559 MB | root(20500M)
+    [3] NVIDIA H100 80GB HBM3 | 34°C,  34 % | 20491 / 81559 MB | root(20484M)
+    ```
+    Constant elapse time per iteration as baseline.
+    ```
+    [2025-10-11 19:01:56] iteration     1384/  500000 | consumed samples:         5536 | elapsed time per iteration (ms): 271.2 | learning rate: 5.999934E-05 | global batch size:     4 | lm loss: 6.302687E+00 | loss scale: 131072.0 | grad norm: 1.591 | number of skipped iterations:   0 | number of nan iterations:   0 |
+    [2025-10-11 19:01:57] iteration     1385/  500000 | consumed samples:         5540 | elapsed time per iteration (ms): 270.5 | learning rate: 5.999934E-05 | global batch size:     4 | lm loss: 6.263545
+
 
 1. **Tensor Parallel**: `make train-tp2-gpt2-large-2gpu`. How to configure tensor parallelism?
     * We set `--tensor-model-parallel-size 2` and `--micro-batch-size 64` (because we only have one replica due to each shard per gpu, and we want to keep the same effective work per gradient update to dp2 case, i.e. 64 global batch size)
@@ -198,3 +239,60 @@ what metric
 ../t5 pretrain_t5.py
 ../bert - pretrain_bert.py
 post-training
+
+
+Good to know:
+1. gradient scaling: enabled for fp16, should observe loss scale. Not for bf16, we see loss scale is always 1.0. static loss scaling can be set by `--loss-scale <val>`.
+1. gradient clipping is optional (`--clip-grad <val>`), but it is reported by default.
+1. FusedAdam - instead of tensor by tensor update, kernel launch overhead, just do more in one go.
+1. optimizer parameter grouping is for varying hyper-parameters for different parameter groups, e.g. weight decay for norm and bias.
+1. examining dtype of model parameters, gradients and optimizer states.
+```python
+type(optimizer).__name__
+
+optimizer.state
+<megatron.core.optimizer.optimizer.ProxyDict object at 0x79dc86787620>
+optimizer.state._inner_dicts (list of dicts)
+
+ks = [k for k, v in optimizer.state.items()]
+k is tuple(list id, param tensor)
+v is key
+
+param_copy = ks[0][1]
+param_copy.shape
+torch.Size([50304, 1600])
+param_copy.dtype
+torch.float32
+
+optimizer.state[ks[0]].keys()
+dict_keys(['exp_avg', 'exp_avg_sq'])
+
+exp_avg = the exponential moving average of gradients
+optimizer.state[ks[0]]['exp_avg'].shape
+torch.Size([50304, 1600])
+optimizer.state[ks[0]]['exp_avg'].dtype
+torch.float32
+
+exp_avg_sq = the exponential moving average of squared gradients
+optimizer.state[ks[0]]['exp_avg_sq'].dtype
+torch.float32
+
+
+model[0].module.module.embedding.word_embeddings.weight.dtype
+torch.bfloat16
+model[0].module.module.embedding.word_embeddings.weight.shape
+torch.Size([50304, 1600])
+
+weight = model[0].module.module.embedding.word_embeddings.weight
+weight_copy = ks[0][1]
+
+weight-weight_copy.to(torch.bfloat16)
+(weight-weight_copy.to(torch.bfloat16)==0).all()
+tensor(True, device='cuda:0')
+
+model.module.module.embedding.word_embeddings.weight.main_grad.dtype
+torch.float32
+
+model.module.module.decoder.layers[4].mlp.linear_fc1.weight.main_grad.dtype
+torch.float32
+```

@@ -25,8 +25,8 @@ prepare-ds-openwebtext-10k:
 110-gpt2-xl-ddp-4gpus-gbs4:
 	bash ./110_gpt2xl_ddp_4gpus_gbs4.sh
 
-train-dp2-gpt2-large-2gpu:
-	bash ./101_train_gpt2_large_dp2.sh
+111-gpt2-xl-dp-zero2-4gpus-gbs4:
+	bash ./111_gpt2xl_zero2_4gpus_gbs4.sh
 
 train-tp2-gpt2-large-2gpu:
 	bash ./102_train_gpt2_large_tp2.sh
