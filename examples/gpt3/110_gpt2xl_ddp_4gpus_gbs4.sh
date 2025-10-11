@@ -83,7 +83,7 @@ EVAL_AND_LOGGING_ARGS=(
     --tensorboard-dir $TENSORBOARD_LOGS_PATH 
     --wandb-entity vchua
     --wandb-project mlm-sandbox
-    --wandb-exp-name $(date +"%y%m%d_%H%M%S")_gpt2-xl_ddp_${NUM_NODES}x${GPUS_PER_NODE}gpu_gbs${BS}
+    --wandb-exp-name $(date +"%y%m%d_%H%M%S")_gpt2-xl_ddp_${NUM_NODES}x${GPUS_PER_NODE}gpu_gbs${GBS}
 )
 
 echo "Executing..."
