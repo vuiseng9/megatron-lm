@@ -22,20 +22,61 @@ prepare-ds-openwebtext-10k:
 100-gpt2-xl-1gpu-bs1:
 	bash ./100_gpt2xl_1gpu_bf16.sh
 
+# DP
 110-gpt2-xl-ddp-4gpus-gbs4:
 	bash ./110_gpt2xl_ddp_4gpus_gbs4.sh
 
 111-gpt2-xl-dp-zero2-4gpus-gbs4:
 	bash ./111_gpt2xl_zero2_4gpus_gbs4.sh
 
-train-tp2-gpt2-large-2gpu:
-	bash ./102_train_gpt2_large_tp2.sh
+# TP Weak Scaling
+211-weak-scaling-tp1-gpt2-1.2B:
+	bash ./211_weak_tp1_gpt2-1.2B.sh
 
-train-tp2-sq-gpt2-large-2gpu:
-	bash ./102.1_train_gpt2_large_tp2+sq.sh
+212-weak-scaling-tp2-gpt2-2.5B:
+	bash ./212_weak_tp2_gpt2-2.5B.sh
 
-train-cp2-gpt2-large-2gpu:
-	bash ./103_train_gpt2_large_cp2.sh
+214-weak-scaling-tp4-gpt2-4.2B:
+	bash ./214_weak_tp4_gpt2-4.2B.sh
 
-train-pp2-gpt2-large-2gpu:
-	bash ./104_train_gpt2_large_pp2.sh
+218-weak-scaling-tp8-gpt2-8.3B:
+	bash ./218_weak_tp8_gpt2-8.3B.sh
+
+# Weak Scaling TP + SP
+sp.211-weak-scaling-tp1-gpt2-1.2B:
+	bash ./211_weak_tp1_gpt2-1.2B.sh 1
+
+sp.212-weak-scaling-tp2-gpt2-2.5B:
+	bash ./212_weak_tp2_gpt2-2.5B.sh 1
+
+sp.214-weak-scaling-tp4-gpt2-4.2B:
+	bash ./214_weak_tp4_gpt2-4.2B.sh 1
+
+sp.218-weak-scaling-tp8-gpt2-8.3B:
+	bash ./218_weak_tp8_gpt2-8.3B.sh 1
+
+# TP Strong Scaling
+221-strong-scaling-tp1-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 1
+
+222-strong-scaling-tp2-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 2
+
+224-strong-scaling-tp4-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 4
+
+228-strong-scaling-tp8-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 8
+
+# Strong Scaling TP + SP
+sp.221-strong-scaling-tp1-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 1 1
+
+sp.222-strong-scaling-tp2-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 2 1
+
+sp.224-strong-scaling-tp4-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 4 1
+
+sp.228-strong-scaling-tp8-gpt2-1.2B:
+	bash ./220_strong_tpN_gpt2-1.2B.sh 8 1

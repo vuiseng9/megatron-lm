@@ -40,7 +40,6 @@ Based on [ootb examples](https://github.com/vuiseng9/megatron-lm/blob/main/examp
 3. Launch Training, start small, 1x gpu, no model parallelism.
     * 345m gpt3, use wandb logging (do login, change entity (account) to yours). Gotcha: wandb training metric logging to wandb depends on tensorboard (internal implementation), make sure we turn on tensorboard! I spent a great deal figure out the design of logging which imho not good.
     * `wandb login`
-    * `make train-gpt3-345m-1gpu-x-model-parallelism`
     * `code --diff train_gpt3_175b_distributed.sh 00_train_gpt3_345m.sh` Review changes to ootb launch script.
 
 ### Tinkering Training Parallelism with GPT2-XL (1.5B)
@@ -62,7 +61,7 @@ We choose 1.5B to align to ZeRO paper discussion.
         * Replica is automatically derived from WORLD_SIZE / (TP * PP * EP)
         * User set `NNODES, GPUS_PER_NODE`, `TP`, `PP`, `EP` to let mlm derive `DP`.
 
-1. **Warm-up**: `make gpt2-xl-1gpu-bs1` 1x GPU, with no model parallelism, gbs=1, mbs=1. We size it such that it is around 80GB.
+1. **Warm-up**: `make 100-gpt2-xl-1gpu-bs1` 1x GPU, with no model parallelism, gbs=1, mbs=1. We size it such that it is around 80GB.
     * Key takeaways from logs below:
         1. #parameters per intention: ~1.5B
         1. Theoretical memory footprints: weight and optimizer=26699.47 MB; this is close to ZeRO paper's discussion ("at least 24GB"). 

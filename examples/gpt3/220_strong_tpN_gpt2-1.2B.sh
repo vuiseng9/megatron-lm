@@ -2,6 +2,7 @@
 
 # Runs the "175B" parameter model
 TP=${1:?"Error: No input argument, pls specify TP degree"}
+SP=${2:-0}
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
@@ -34,15 +35,15 @@ DISTRIBUTED_ARGS=(
 )
 
 GPT_MODEL_ARGS=(
-    --hidden-size 1920
-    --num-attention-heads 20
-    --num-layers 54 
+    --hidden-size 1536
+    --num-attention-heads 16
+    --num-layers 40 
     --seq-length 1024
     --max-position-embeddings 1024
     --attention-backend auto # Can use (flash/fused/unfused/local)
 )
 
-GBS=8
+GBS=20
 MBS=$GBS
     # --rampup-batch-size 16 16 5859375 
 TRAINING_ARGS=(
@@ -68,6 +69,17 @@ MODEL_PARALLEL_ARGS=(
 	--pipeline-model-parallel-size 1 
 )
 
+if [ "$SP" -eq 0 ]; then
+    sp="no-sp"
+    :
+elif [ "$SP" -eq 1 ]; then
+    MODEL_PARALLEL_ARGS+=(--sequence-parallel)
+    sp="wt-sp"
+else
+    echo "Error: last argument must be 0 (no SP) or 1 (with SP)"
+    exit
+fi
+
 DATA_ARGS=(
     --data-path $DATA_PATH 
     --vocab-file $VOCAB_FILE 
@@ -85,7 +97,7 @@ EVAL_AND_LOGGING_ARGS=(
     --tensorboard-dir $TENSORBOARD_LOGS_PATH 
     --wandb-entity vchua
     --wandb-project mlm-sandbox
-    --wandb-exp-name $(date +"%y%m%d_%H%M%S")_strong_tp${TP}_${GPUS_PER_NODE}gpus_gbs${GBS}_gpt2-2.5B
+    --wandb-exp-name $(date +"%y%m%d_%H%M%S")_strong_tp${TP}_${sp}_${GPUS_PER_NODE}gpus_gbs${GBS}_gpt2-1.2B
 )
 
 echo "Executing..."
