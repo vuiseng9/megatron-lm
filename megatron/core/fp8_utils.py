@@ -427,8 +427,10 @@ if HAVE_TE:
                 fp8_format = transformer_engine.common.recipe.Format.E4M3
             elif config.fp8 == "hybrid":
                 fp8_format = transformer_engine.common.recipe.Format.HYBRID
+            elif config.fp8 == "e2m1":
+                fp8_format = transformer_engine.common.recipe.Format.E2M1
             else:
-                raise ValueError("E4M3 and HYBRID are the only supported FP8 formats.")
+                raise ValueError("E4M3, HYBRID, E2M1 are the only supported FP8 formats.")
 
             # Select fp8 recipe (TE version >= 2.1.0).
             fp8_recipe = None
@@ -451,6 +453,15 @@ if HAVE_TE:
                     fp8_recipe = transformer_engine.common.recipe.MXFP8BlockScaling(
                         fp8_format=fp8_format
                     )
+                elif config.fp8_recipe == Fp8Recipe.nvfp4_fw_mxfp8_bw:
+                    if is_te_min_version("2.5.0"):
+                        fp8_recipe = transformer_engine.common.recipe.NVFP4FwdMXFP8BwdScaling(
+                            fp8_format=fp8_format
+                        )
+                    else:
+                        raise ValueError(
+                            "FwNVFP4BwMXFP8 recipe requires TransformerEngine version >= 2.4.0."
+                        )
                 else:
                     raise ValueError(
                         "Float8CurrentScaling, MXFP8BlockScaling, Float8BlockwiseScaling and "
