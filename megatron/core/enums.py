@@ -26,3 +26,4 @@ class Fp8Recipe(str, enum.Enum):
     tensorwise = "tensorwise"
     mxfp8 = "mxfp8"
     blockwise = "blockwise"
+    nvfp4 = "nvfp4"
