@@ -80,3 +80,28 @@ sp.224-strong-scaling-tp4-gpt2-1.2B:
 
 sp.228-strong-scaling-tp8-gpt2-1.2B:
 	bash ./220_strong_tpN_gpt2-1.2B.sh 8 1
+
+# CP
+301-cp1-gpt2xl-gbs4-len4096-oom:
+	bash ./300_cpN_gpt2xl_gbs4_len4096.sh 1
+
+302-cp2-gpt2xl-gbs4-len4096:
+	bash ./300_cpN_gpt2xl_gbs4_len4096.sh 2
+
+304-cp4-gpt2xl-gbs4-len4096:
+	bash ./300_cpN_gpt2xl_gbs4_len4096.sh 4
+
+308-cp8-gpt2xl-gbs4-len4096:
+	bash ./300_cpN_gpt2xl_gbs4_len4096.sh 8
+
+311-gpt2xl-gbs4-len8192-cp8:
+	bash ./310_gpt2xl_gbsX_lenX_cpX.sh 4 8192 8
+
+312-gpt2xl-gbs4-len16384-cp8:
+	bash ./310_gpt2xl_gbsX_lenX_cpX.sh 4 16384 8
+
+313-gpt2xl-gbs8-len8192-cp8:
+	bash ./310_gpt2xl_gbsX_lenX_cpX.sh 8 8192 8
+
+314-gpt2xl-gbs8-len8192-cp4-oom:
+	bash ./310_gpt2xl_gbsX_lenX_cpX.sh 8 16384 4
