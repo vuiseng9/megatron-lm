@@ -16,3 +16,7 @@ onelogger.err
 runs/
 /test_cases/
 **/dist/
+
+
+owt-ds/
+sandbox_run/
