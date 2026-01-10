@@ -1,0 +1,74 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "vs-py",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "env": {},
+            "cwd": "${workspaceFolder}",
+            "module": "torch.distributed.run",
+            "args": [
+                "--nproc_per_node", "8",
+                "--nnodes", "1",
+                "--master_addr", "localhost",
+                "--master_port", "6000",
+                "../../pretrain_gpt.py",
+                "--hidden-size", "1024",
+                "--num-attention-heads", "16",
+                "--num-layers", "16",
+                "--seq-length", "2048",
+                "--max-position-embeddings", "2048",
+                "--attention-backend", "auto",
+                "--disable-bias-linear",
+                "--num-experts", "64",
+                "--moe-router-topk", "8",
+                "--moe-ffn-hidden-size", "1024",
+                "--moe-router-force-load-balancing",
+                "--moe-grouped-gemm",
+                "--expert-model-parallel-size", "8",
+                "--moe-token-dispatcher-type", "alltoall",
+                "--micro-batch-size", "4",
+                "--global-batch-size", "32",
+                "--train-iters", "500000",
+                "--weight-decay", "0.1",
+                "--adam-beta1", "0.9",
+                "--adam-beta2", "0.95",
+                "--init-method-std", "0.006",
+                "--clip-grad", "1.0",
+                "--bf16",
+                "--lr", "6.0e-5",
+                "--lr-decay-style", "cosine",
+                "--min-lr", "6.0e-6",
+                "--lr-warmup-fraction", ".001",
+                "--lr-decay-iters", "430000",
+                "--tensor-model-parallel-size", "1",
+                "--pipeline-model-parallel-size", "1",
+                "--context-parallel-size", "1",
+                "--data-path", "./owt-ds/openwebtext-10k_text_document",
+                "--vocab-file", "./owt-ds/gpt2-vocab.json",
+                "--merge-file", "./owt-ds/gpt2-merges.txt",
+                "--split", "949,50,1",
+                "--train-iters", "100",
+                "--log-interval", "1",
+                "--log-throughput",
+                "--save-interval", "0",
+                "--eval-interval", "50",
+                "--eval-iters", "10",
+                "--tensorboard-dir", "./outdir/260109_201248___gpt2-1.2B-1x8gpu_weak_tp1_no-sp_gbs32/tb"
+            ]
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}
