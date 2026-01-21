@@ -1,0 +1,57 @@
+  --num-experts
+  --moe-router-topk
+  --moe-ffn-hidden-size
+  --expert-model-parallel-size
+  --moe-router-load-balancing-type
+  --moe-aux-loss-coeff
+  --moe-grouped-gemm
+  --moe-token-dispatcher-type 
+  --moe-router-force-load-balancing
+  --moe-permute-fusion
+
+Default:
+  --moe-layer-freq 1
+  --moe-router-dtype None
+  --moe-router-score-function softmax
+  --moe-router-pre-softmax (softmax after topk)
+  --moe-router-topk-scaling-factor (related to the flag above)
+
+Potential:
+  --moe-extended-tp
+  --moe-layer-recompute
+
+  --moe-expert-capacity-factor
+  --moe-pad-expert-input-to-capacity
+  --moe-token-drop-policy
+
+  --overlap-moe-expert-parallel-comm (only with pp, most likely we dont have enough)
+
+
+obsolete
+  --moe-use-legacy-grouped-gemm
+
+need compilation
+  --moe-enable-deepep
+  --moe-deepep-num-sms (need compilation?)
+
+ignore due to modelling
+  --moe-router-load-balancing-type aux_loss
+  --moe-aux-loss-coeff 1e-2
+  --moe-router-fusion (dont matter because force lb)
+  --moe-router-enable-expert-bias
+  --moe-router-bias-update-rate
+  --moe-z-loss-coeff
+  --moe-per-layer-logging (log zloss and aux loss)
+  --moe-upcycling-granularity
+  --moe-use-upcycling
+  --moe-shared-expert-intermediate-size
+  --moe-shared-expert-overlap
+  --moe-router-num-groups   (group/node/device limited)
+  --moe-router-group-topk
+  --moe-router-padding-for-fp8 (no fp8)
+  --moe-input-jitter-eps (stability, prevent collapse, regularization)
+  --moe-apply-probs-on-input (really wonder why this exists in the first place)
+
+
+opens:
+- need to test if we turn on aux loss, --force lb still work? if yes, set aux loss to align as close to reality

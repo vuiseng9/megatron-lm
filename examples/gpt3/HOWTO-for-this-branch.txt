@@ -1,0 +1,4 @@
+see build_for_megatron.txt
+
+https://github.com/vuiseng9/deepseek-ep
+branch: 260120-mlmoe

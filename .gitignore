@@ -1,3 +1,6 @@
+owt-ds/
+outdir/
+
 __pycache__
 *.so
 build
