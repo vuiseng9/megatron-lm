@@ -7,6 +7,10 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--attention-backend {AttnBackend.flash,AttnBackend.fused,AttnBackend.unfused,AttnBackend.local,AttnBackend.auto}]
                        [--kv-channels KV_CHANNELS] [--group-query-attention]
                        [--num-query-groups NUM_QUERY_GROUPS]
+                       [--attention-output-gate]
+                       [--softmax-type {learnable,vanilla,off-by-one}]
+                       [--window-size WINDOW_SIZE]
+                       [--window-attn-skip-freq WINDOW_ATTN_SKIP_FREQ]
                        [--max-position-embeddings MAX_POSITION_EMBEDDINGS]
                        [--position-embedding-type {learned_absolute,rope,mrope,relative,none}]
                        [--relative-attention-num-buckets RELATIVE_ATTENTION_NUM_BUCKETS]
@@ -25,44 +29,64 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--norm-epsilon NORM_EPSILON] [--apply-layernorm-1p]
                        [--apply-residual-connection-post-layernorm]
                        [--openai-gelu] [--squared-relu] [--swiglu]
+                       [--quick-geglu]
+                       [--activation-func-clamp-value ACTIVATION_FUNC_CLAMP_VALUE]
+                       [--glu-linear-offset GLU_LINEAR_OFFSET]
                        [--onnx-safe ONNX_SAFE] [--bert-no-binary-head]
                        [--untie-embeddings-and-output-weights]
                        [--multi-latent-attention]
                        [--mtp-num-layers MTP_NUM_LAYERS]
                        [--mtp-loss-scaling-factor MTP_LOSS_SCALING_FACTOR]
+                       [--moe-latent-size MOE_LATENT_SIZE]
                        [--attention-dropout ATTENTION_DROPOUT]
                        [--hidden-dropout HIDDEN_DROPOUT]
                        [--weight-decay WEIGHT_DECAY]
-                       [--start-weight-decay START_WEIGHT_DECAY]
-                       [--end-weight-decay END_WEIGHT_DECAY]
-                       [--weight-decay-incr-style {constant,linear,cosine}]
-                       [--clip-grad CLIP_GRAD] [--adam-beta1 ADAM_BETA1]
-                       [--adam-beta2 ADAM_BETA2] [--adam-eps ADAM_EPS]
-                       [--sgd-momentum SGD_MOMENTUM]
-                       [--micro-batch-size MICRO_BATCH_SIZE]
-                       [--batch-size BATCH_SIZE]
-                       [--global-batch-size GLOBAL_BATCH_SIZE]
-                       [--rampup-batch-size [RAMPUP_BATCH_SIZE ...]]
-                       [--decrease-batch-size-if-needed]
-                       [--recompute-activations]
-                       [--recompute-granularity {full,selective}]
-                       [--no-check-for-nan-in-loss-and-grad]
-                       [--check-for-spiky-loss] [--check-for-large-grads]
-                       [--distribute-saved-activations]
-                       [--recompute-method {uniform,block}]
-                       [--recompute-num-layers RECOMPUTE_NUM_LAYERS]
-                       [--recompute-modules [RECOMPUTE_MODULES ...]]
-                       [--no-clone-scatter-output-in-embedding] [--profile]
-                       [--profile-step-start PROFILE_STEP_START]
+                       [--apply-wd-to-qk-layernorm] [--clip-grad CLIP_GRAD]
+                       [--adam-beta1 ADAM_BETA1] [--adam-beta2 ADAM_BETA2]
+                       [--adam-eps ADAM_EPS] [--sgd-momentum SGD_MOMENTUM]
+                       [--muon-momentum MUON_MOMENTUM] [--muon-no-split-qkv]
+                       [--muon-use-nesterov]
+                       [--muon-scale-mode {spectral,unit_rms_norm,shape_scaling}]
+                       [--muon-fp32-matmul-prec {low,medium,high}]
+                       [--muon-num-ns-steps MUON_NUM_NS_STEPS]
+                       [--muon-tp-mode {blockwise,duplicated,distributed}]
+                       [--muon-extra-scale-factor MUON_EXTRA_SCALE_FACTOR]
+                       [--no-weight-decay-cond-type {apply_wd_to_qk_layernorm}]
+                       [--profile] [--profile-step-start PROFILE_STEP_START]
                        [--profile-step-end PROFILE_STEP_END]
-                       [--iterations-to-skip ITERATIONS_TO_SKIP [ITERATIONS_TO_SKIP ...]]
-                       [--result-rejected-tracker-filename RESULT_REJECTED_TRACKER_FILENAME]
-                       [--disable-gloo-process-groups]
                        [--use-pytorch-profiler]
                        [--profile-ranks PROFILE_RANKS [PROFILE_RANKS ...]]
                        [--record-memory-history]
                        [--memory-snapshot-path MEMORY_SNAPSHOT_PATH]
-                       [--tp-comm-overlap]
+                       [--micro-batch-size MICRO_BATCH_SIZE]
+                       [--global-batch-size GLOBAL_BATCH_SIZE]
+                       [--rampup-batch-size RAMPUP_BATCH_SIZE RAMPUP_BATCH_SIZE RAMPUP_BATCH_SIZE]
+                       [--decrease-batch-size-if-needed]
+                       [--empty-unused-memory-level {0,1,2}]
+                       [--check-weight-hash-across-dp-replicas-interval CHECK_WEIGHT_HASH_ACROSS_DP_REPLICAS_INTERVAL]
+                       [--train-sync-interval TRAIN_SYNC_INTERVAL]
+                       [--train-iters TRAIN_ITERS]
+                       [--train-samples TRAIN_SAMPLES]
+                       [--exit-interval EXIT_INTERVAL]
+                       [--exit-duration-in-mins EXIT_DURATION_IN_MINS]
+                       [--exit-signal-handler]
+                       [--exit-signal {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,34,64}]
+                       [--exit-signal-handler-for-dataloader] [--manual-gc]
+                       [--manual-gc-interval MANUAL_GC_INTERVAL]
+                       [--no-manual-gc-eval]
+                       [--iterations-to-skip ITERATIONS_TO_SKIP [ITERATIONS_TO_SKIP ...]]
+                       [--batch-size BATCH_SIZE] [--recompute-activations]
+                       [--recompute-granularity {full,selective}]
+                       [--no-check-for-nan-in-loss-and-grad]
+                       [--check-for-large-grads]
+                       [--distribute-saved-activations]
+                       [--recompute-method {uniform,block}]
+                       [--recompute-num-layers RECOMPUTE_NUM_LAYERS]
+                       [--recompute-modules [RECOMPUTE_MODULES ...]]
+                       [--cpu-offloading-num-layers CPU_OFFLOADING_NUM_LAYERS]
+                       [--no-clone-scatter-output-in-embedding]
+                       [--result-rejected-tracker-filename RESULT_REJECTED_TRACKER_FILENAME]
+                       [--disable-gloo-process-groups] [--tp-comm-overlap]
                        [--tp-comm-overlap-cfg TP_COMM_OVERLAP_CFG]
                        [--disable-tp-comm-overlap-ag]
                        [--disable-tp-comm-overlap-rs]
@@ -70,18 +94,9 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--disable-tp-comm-bulk-dgrad]
                        [--disable-tp-comm-bulk-wgrad]
                        [--tp-comm-bootstrap-backend {nccl,mpi,gloo}]
-                       [--use-cpu-initialization]
-                       [--empty-unused-memory-level {0,1,2}]
-                       [--deterministic-mode]
-                       [--check-weight-hash-across-dp-replicas-interval CHECK_WEIGHT_HASH_ACROSS_DP_REPLICAS_INTERVAL]
-                       [--calculate-per-token-loss]
-                       [--train-sync-interval TRAIN_SYNC_INTERVAL]
-                       [--checkpoint-activations] [--train-iters TRAIN_ITERS]
-                       [--train-samples TRAIN_SAMPLES]
+                       [--use-cpu-initialization] [--deterministic-mode]
+                       [--calculate-per-token-loss] [--checkpoint-activations]
                        [--log-interval LOG_INTERVAL]
-                       [--exit-interval EXIT_INTERVAL]
-                       [--exit-duration-in-mins EXIT_DURATION_IN_MINS]
-                       [--exit-signal-handler]
                        [--tensorboard-dir TENSORBOARD_DIR]
                        [--no-masked-softmax-fusion] [--no-bias-gelu-fusion]
                        [--no-bias-swiglu-fusion]
@@ -90,38 +105,88 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--rope-type {rope,yarn}] [--cross-entropy-loss-fusion]
                        [--cross-entropy-fusion-impl {native,te}]
                        [--use-flash-attn] [--disable-bias-linear]
-                       [--add-qkv-bias] [--optimizer {adam,sgd}]
+                       [--add-qkv-bias] [--qk-clip]
+                       [--qk-clip-alpha QK_CLIP_ALPHA]
+                       [--qk-clip-threshold QK_CLIP_THRESHOLD]
+                       [--optimizer {adam,sgd,muon,dist_muon}]
                        [--optimizer-cpu-offload]
                        [--optimizer-offload-fraction OPTIMIZER_OFFLOAD_FRACTION]
                        [--use-torch-optimizer-for-cpu-offload]
-                       [--overlap-cpu-optimizer-d2h-h2d] [--no-pin-cpu-grads]
-                       [--no-pin-cpu-params]
+                       [--overlap-cpu-optimizer-d2h-h2d]
+                       [--dump-param-to-param-group-map DUMP_PARAM_TO_PARAM_GROUP_MAP]
+                       [--no-pin-cpu-grads] [--no-pin-cpu-params]
                        [--dataloader-type {single,cyclic,external}]
                        [--no-async-tensor-model-parallel-allreduce]
                        [--no-persist-layer-norm] [--sequence-parallel]
                        [--no-gradient-accumulation-fusion]
                        [--use-mcore-models] [--use-legacy-models]
-                       [--manual-gc] [--manual-gc-interval MANUAL_GC_INTERVAL]
-                       [--no-manual-gc-eval] [--disable-tp-comm-split-ag]
+                       [--disable-tp-comm-split-ag]
                        [--disable-tp-comm-split-rs]
                        [--pipeline-model-parallel-comm-backend {nccl,ucc}]
                        [--high-priority-stream-groups [HIGH_PRIORITY_STREAM_GROUPS ...]]
-                       [--seed SEED] [--data-parallel-random-init]
+                       [--use-te-activation-func]
+                       [--fine-grained-activation-offloading]
+                       [--offload-modules [OFFLOAD_MODULES ...]]
+                       [--min-offloaded-tensor-size MIN_OFFLOADED_TENSOR_SIZE]
+                       [--batch-invariant-mode] [--disable-jit-fuser]
+                       [--perform-rl-step]
+                       [--rl-prompts-per-eval RL_PROMPTS_PER_EVAL]
+                       [--grpo-prompts-per-step GRPO_PROMPTS_PER_STEP]
+                       [--grpo-group-size GRPO_GROUP_SIZE]
+                       [--grpo-iterations GRPO_ITERATIONS]
+                       [--grpo-clamp-eps-lower GRPO_CLAMP_EPS_LOWER]
+                       [--grpo-clamp-eps-upper GRPO_CLAMP_EPS_UPPER]
+                       [--grpo-kl-beta GRPO_KL_BETA]
+                       [--grpo-entropy-term-weight GRPO_ENTROPY_TERM_WEIGHT]
+                       [--grpo-filter-groups-with-same-reward]
+                       [--langrl-inference-server-type {inplace_megatron,inplace_megatron_chat}]
+                       [--langrl-inference-server-conversation-template LANGRL_INFERENCE_SERVER_CONVERSATION_TEMPLATE]
+                       [--langrl-external-server | --no-langrl-external-server]
+                       [--langrl-env-config LANGRL_ENV_CONFIG]
+                       [--rl-default-temperature RL_DEFAULT_TEMPERATURE]
+                       [--rl-default-top-p RL_DEFAULT_TOP_P]
+                       [--rl-default-top-k RL_DEFAULT_TOP_K]
+                       [--rl-offload-optimizer-during-inference]
+                       [--rl-offload-kv-cache-during-training | --no-rl-offload-kv-cache-during-training]
+                       [--rl-remove-kv-cache-during-training | --no-rl-remove-kv-cache-during-training]
+                       [--rl-reset-cuda-graphs | --no-rl-reset-cuda-graphs]
+                       [--rl-partial-rollouts | --no-rl-partial-rollouts]
+                       [--rl-inference-logprobs-is-correction | --no-rl-inference-logprobs-is-correction]
+                       [--rl-importance-sampling-truncation-coef RL_IMPORTANCE_SAMPLING_TRUNCATION_COEF]
+                       [--rl-calculate-intra-group-similarity | --no-rl-calculate-intra-group-similarity]
+                       [--rl-use-sequence-packing | --no-rl-use-sequence-packing]
+                       [--rl-sequence-packing-max-sequences-per-bin RL_SEQUENCE_PACKING_MAX_SEQUENCES_PER_BIN]
+                       [--rl-sequence-packing-algo {fifo,round-robin}]
+                       [--rl-training-cuda-graphs | --no-rl-training-cuda-graphs]
+                       [--rl-inference-tensor-model-parallel-size RL_INFERENCE_TENSOR_MODEL_PARALLEL_SIZE]
+                       [--rl-inference-pipeline-model-parallel-size RL_INFERENCE_PIPELINE_MODEL_PARALLEL_SIZE]
+                       [--rl-inference-model-unified-memory-level {0,1}]
+                       [--rl-offload-inference-model-weights-when-idle | --no-rl-offload-inference-model-weights-when-idle]
+                       [--refit-method {nccl,gloo}]
+                       [--rl-verify-model-weights-swap | --no-rl-verify-model-weights-swap]
+                       [--rl-parallel-generation-tasks RL_PARALLEL_GENERATION_TASKS]
+                       [--rl-skip-bos-token | --no-rl-skip-bos-token]
+                       [--seed SEED] [--te-rng-tracker]
+                       [--inference-rng-tracker] [--data-parallel-random-init]
                        [--init-method-std INIT_METHOD_STD]
                        [--embedding-init-method-std EMBEDDING_INIT_METHOD_STD]
-                       [--init-method-xavier-uniform] [--lr LR]
+                       [--init-method-xavier-uniform]
                        [--lr-decay-style {constant,linear,cosine,inverse-square-root,WSD}]
                        [--lr-wsd-decay-style {exponential,linear,cosine,minus_sqrt}]
                        [--lr-decay-iters LR_DECAY_ITERS]
                        [--lr-decay-samples LR_DECAY_SAMPLES]
-                       [--lr-wsd-decay-samples LR_WSD_DECAY_SAMPLES]
                        [--lr-wsd-decay-iters LR_WSD_DECAY_ITERS]
+                       [--lr-wsd-decay-samples LR_WSD_DECAY_SAMPLES]
                        [--lr-warmup-fraction LR_WARMUP_FRACTION]
                        [--lr-warmup-iters LR_WARMUP_ITERS]
                        [--lr-warmup-samples LR_WARMUP_SAMPLES]
-                       [--lr-warmup-init LR_WARMUP_INIT] [--warmup WARMUP]
-                       [--min-lr MIN_LR] [--override-opt_param-scheduler]
+                       [--lr-warmup-init LR_WARMUP_INIT]
+                       [--override-opt_param-scheduler]
                        [--use-checkpoint-opt_param-scheduler]
+                       [--start-weight-decay START_WEIGHT_DECAY]
+                       [--end-weight-decay END_WEIGHT_DECAY]
+                       [--weight-decay-incr-style {constant,linear,cosine}]
+                       [--lr LR] [--warmup WARMUP] [--min-lr MIN_LR]
                        [--decoupled-lr DECOUPLED_LR]
                        [--decoupled-min-lr DECOUPLED_MIN_LR] [--save SAVE]
                        [--save-interval SAVE_INTERVAL]
@@ -144,8 +209,8 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--use-persistent-ckpt-worker]
                        [--auto-detect-ckpt-format]
                        [--dist-ckpt-format DIST_CKPT_FORMAT_DEPRECATED]
-                       [--ckpt-format {torch,torch_dist,zarr,torch_dcp,fsdp_dtensor}]
-                       [--ckpt-convert-format {torch,torch_dist,zarr}]
+                       [--ckpt-format {torch,torch_dist,torch_dcp,fsdp_dtensor}]
+                       [--ckpt-convert-format {torch,torch_dist}]
                        [--ckpt-convert-save CKPT_CONVERT_SAVE]
                        [--ckpt-convert-update-legacy-dist-opt-format]
                        [--ckpt-fully-parallel-save]
@@ -153,8 +218,10 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--ckpt-fully-parallel-load]
                        [--ckpt-assume-constant-structure]
                        [--dist-ckpt-strictness {assume_ok_unexpected,log_unexpected,log_all,raise_unexpected,raise_all,return_unexpected,return_all,ignore_all}]
-                       [--load-model-opt-format] [--fp16] [--bf16]
-                       [--grad-reduce-in-bf16] [--loss-scale LOSS_SCALE]
+                       [--dist-ckpt-optim-fully-reshardable]
+                       [--distrib-optim-fully-reshardable-mem-efficient]
+                       [--fp16] [--bf16] [--grad-reduce-in-bf16]
+                       [--loss-scale LOSS_SCALE]
                        [--initial-loss-scale INITIAL_LOSS_SCALE]
                        [--min-loss-scale MIN_LOSS_SCALE]
                        [--loss-scale-window LOSS_SCALE_WINDOW]
@@ -178,6 +245,7 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--overlap-p2p-communication-warmup-flush]
                        [--distributed-backend {nccl,gloo}]
                        [--distributed-timeout-minutes DISTRIBUTED_TIMEOUT_MINUTES]
+                       [--distributed-timeout-seconds-after-init DISTRIBUTED_TIMEOUT_SECONDS_AFTER_INIT]
                        [--overlap-grad-reduce]
                        [--defer-embedding-wgrad-compute]
                        [--wgrad-deferral-limit WGRAD_DEFERRAL_LIMIT]
@@ -185,6 +253,7 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--ddp-num-buckets DDP_NUM_BUCKETS]
                        [--ddp-bucket-size DDP_BUCKET_SIZE]
                        [--ddp-pad-buckets-for-high-nccl-busbw]
+                       [--ddp-reduce-scatter-with-fp32-accumulation]
                        [--ddp-average-in-collective] [--overlap-param-gather]
                        [--overlap-param-gather-with-optimizer-step]
                        [--no-align-param-gather]
@@ -194,7 +263,9 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--account-for-embedding-in-pipeline-split]
                        [--account-for-loss-in-pipeline-split]
                        [--use-distributed-optimizer] [--use-nccl-ub]
-                       [--use-sharp] [--sharp-enabled-group {dp,dp_replica}]
+                       [--disable-symmetric-registration]
+                       [--fsdp-manual-registration] [--use-sharp]
+                       [--sharp-enabled-group {dp,dp_replica}]
                        [--use-megatron-fsdp] [--init-model-with-meta-device]
                        [--data-parallel-sharding-strategy {no_shard,optim,optim_grads,optim_grads_params}]
                        [--no-gradient-reduce-div-fusion]
@@ -208,20 +279,27 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--context-parallel-size CONTEXT_PARALLEL_SIZE]
                        [--cp-comm-type CP_COMM_TYPE [CP_COMM_TYPE ...]]
                        [--hierarchical-context-parallel-sizes HIERARCHICAL_CONTEXT_PARALLEL_SIZES [HIERARCHICAL_CONTEXT_PARALLEL_SIZES ...]]
+                       [--max-seqlen-per-cp-rank MAX_SEQLEN_PER_CP_RANK]
+                       [--hybrid-context-parallel]
                        [--nccl-communicator-config-path NCCL_COMMUNICATOR_CONFIG_PATH]
                        [--use-tp-pp-dp-mapping] [--replication]
                        [--replication-jump REPLICATION_JUMP]
                        [--replication-factor REPLICATION_FACTOR]
-                       [--full-validation] [--multiple-validation-sets]
-                       [--eval-iters EVAL_ITERS]
-                       [--eval-interval EVAL_INTERVAL] [--test-mode]
-                       [--skip-train] [--data-path [DATA_PATH ...]]
+                       [--fake-process-group] [--eval-iters EVAL_ITERS]
+                       [--eval-interval EVAL_INTERVAL] [--skip-train]
+                       [--test-mode] [--full-validation]
+                       [--multiple-validation-sets]
+                       [--data-path [DATA_PATH ...]]
+                       [--phase-transition-iterations PHASE_TRANSITION_ITERATIONS]
                        [--split SPLIT]
                        [--train-data-path [TRAIN_DATA_PATH ...]]
                        [--valid-data-path [VALID_DATA_PATH ...]]
                        [--test-data-path [TEST_DATA_PATH ...]]
                        [--data-args-path DATA_ARGS_PATH]
                        [--per-split-data-args-path PER_SPLIT_DATA_ARGS_PATH]
+                       [--per-dataset-sequences-path PER_DATASET_SEQUENCES_PATH]
+                       [--dataloader-fast-cache-load]
+                       [--dataloader-defer-npy-index-mmap]
                        [--data-cache-path DATA_CACHE_PATH]
                        [--no-mmap-bin-files] [--mock-data]
                        [--seq-length SEQ_LENGTH]
@@ -236,16 +314,32 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--num-dataset-builder-threads NUM_DATASET_BUILDER_THREADS]
                        [--object-storage-cache-path OBJECT_STORAGE_CACHE_PATH]
                        [--mid-level-dataset-surplus MID_LEVEL_DATASET_SURPLUS]
+                       [--allow-ambiguous-pad-tokens] [--fim-data]
+                       [--fim-rate FIM_RATE] [--fim-spm-rate FIM_SPM_RATE]
+                       [--fim-split-sample FIM_SPLIT_SAMPLE]
+                       [--fim-fragment-rate FIM_FRAGMENT_RATE]
+                       [--fim-no-prefix FIM_NO_PREFIX]
+                       [--fim-prefix-token FIM_PREFIX_TOKEN]
+                       [--fim-middle-token FIM_MIDDLE_TOKEN]
+                       [--fim-suffix-token FIM_SUFFIX_TOKEN]
+                       [--fim-pad-token FIM_PAD_TOKEN]
+                       [--fim-eod-token FIM_EOD_TOKEN]
                        [--vocab-size VOCAB_SIZE]
                        [--padded-vocab-size PADDED_VOCAB_SIZE]
                        [--vocab-file VOCAB_FILE] [--merge-file MERGE_FILE]
                        [--vocab-extra-ids VOCAB_EXTRA_IDS]
                        [--tokenizer-type {BertWordPieceLowerCase,BertWordPieceCase,GPT2BPETokenizer,SentencePieceTokenizer,GPTSentencePieceTokenizer,HuggingFaceTokenizer,Llama2Tokenizer,TikTokenizer,MultimodalTokenizer,NullTokenizer,NullMultimodalTokenizer,SFTTokenizer}]
                        [--tokenizer-model TOKENIZER_MODEL]
+                       [--tokenizer-metadata TOKENIZER_METADATA]
+                       [--tokenizer-special-tokens TOKENIZER_SPECIAL_TOKENS [TOKENIZER_SPECIAL_TOKENS ...]]
+                       [--legacy-tokenizer]
                        [--tiktoken-pattern TIKTOKEN_PATTERN]
                        [--tiktoken-num-special-tokens TIKTOKEN_NUM_SPECIAL_TOKENS]
                        [--tiktoken-special-tokens TIKTOKEN_SPECIAL_TOKENS [TIKTOKEN_SPECIAL_TOKENS ...]]
-                       [--adlr-autoresume]
+                       [--tokenizer-sentencepiece-legacy]
+                       [--tokenizer-hf-use-fast]
+                       [--tokenizer-hf-include-special-tokens]
+                       [--trust-remote-code] [--adlr-autoresume]
                        [--adlr-autoresume-interval ADLR_AUTORESUME_INTERVAL]
                        [--ict-head-size ICT_HEAD_SIZE]
                        [--biencoder-projection-dim BIENCODER_PROJECTION_DIM]
@@ -289,10 +383,11 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--moe-layer-freq MOE_LAYER_FREQ]
                        [--moe-ffn-hidden-size MOE_FFN_HIDDEN_SIZE]
                        [--moe-shared-expert-intermediate-size MOE_SHARED_EXPERT_INTERMEDIATE_SIZE]
+                       [--moe-shared-expert-gate]
                        [--moe-shared-expert-overlap] [--moe-grouped-gemm]
                        [--moe-use-legacy-grouped-gemm] [--moe-layer-recompute]
                        [--moe-extended-tp] [--moe-use-upcycling]
-                       [--moe-router-load-balancing-type {aux_loss,seq_aux_loss,sinkhorn,none} [{aux_loss,seq_aux_loss,sinkhorn,none} ...]]
+                       [--moe-router-load-balancing-type {aux_loss,seq_aux_loss,global_aux_loss,sinkhorn,none} [{aux_loss,seq_aux_loss,global_aux_loss,sinkhorn,none} ...]]
                        [--moe-router-dtype {fp32,fp64}] [--moe-router-fusion]
                        [--moe-router-score-function {softmax,sigmoid}]
                        [--moe-router-topk MOE_ROUTER_TOPK]
@@ -303,6 +398,7 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--moe-router-enable-expert-bias]
                        [--moe-router-bias-update-rate MOE_ROUTER_BIAS_UPDATE_RATE]
                        [--moe-router-force-load-balancing]
+                       [--moe-router-padding-for-quantization]
                        [--moe-router-padding-for-fp8]
                        [--moe-aux-loss-coeff MOE_AUX_LOSS_COEFF [MOE_AUX_LOSS_COEFF ...]]
                        [--moe-z-loss-coeff MOE_Z_LOSS_COEFF]
@@ -310,7 +406,9 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--moe-per-layer-logging]
                        [--moe-token-dispatcher-type {allgather,alltoall,flex}]
                        [--moe-enable-deepep]
+                       [--moe-flex-dispatcher-backend {deepep,hybridep}]
                        [--moe-deepep-num-sms MOE_DEEPEP_NUM_SMS]
+                       [--moe-hybridep-num-sms MOE_HYBRIDEP_NUM_SMS]
                        [--moe-permute-fusion]
                        [--moe-expert-capacity-factor MOE_EXPERT_CAPACITY_FACTOR]
                        [--moe-pad-expert-input-to-capacity]
@@ -318,7 +416,9 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--moe-apply-probs-on-input]
                        [--overlap-moe-expert-parallel-comm]
                        [--delay-wgrad-compute]
+                       [--ep-overlap-early-attn-memory-release]
                        [--moe-upcycling-granularity MOE_UPCYCLING_GRANULARITY]
+                       [--moe-pad-experts-for-cuda-graph-inference]
                        [--q-lora-rank Q_LORA_RANK]
                        [--kv-lora-rank KV_LORA_RANK]
                        [--qk-head-dim QK_HEAD_DIM]
@@ -327,6 +427,18 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--rotary-scaling-factor ROTARY_SCALING_FACTOR]
                        [--mscale MSCALE] [--mscale-all-dim MSCALE_ALL_DIM]
                        [--cache-mla-latents]
+                       [--experimental-attention-variant {gated_delta_net,dsa}]
+                       [--dsa-indexer-n-heads DSA_INDEXER_N_HEADS]
+                       [--dsa-indexer-head-dim DSA_INDEXER_HEAD_DIM]
+                       [--dsa-indexer-topk DSA_INDEXER_TOPK]
+                       [--dsa-indexer-loss-coeff DSA_INDEXER_LOSS_COEFF]
+                       [--dsa-indexer-use-sparse-loss]
+                       [--linear-attention-freq LINEAR_ATTENTION_FREQ]
+                       [--linear-conv-kernel-dim LINEAR_CONV_KERNEL_DIM]
+                       [--linear-key-head-dim LINEAR_KEY_HEAD_DIM]
+                       [--linear-value-head-dim LINEAR_VALUE_HEAD_DIM]
+                       [--linear-num-key-heads LINEAR_NUM_KEY_HEADS]
+                       [--linear-num-value-heads LINEAR_NUM_VALUE_HEADS]
                        [--heterogeneous-layers-config-path HETEROGENEOUS_LAYERS_CONFIG_PATH]
                        [--heterogeneous-layers-config-encoded-json HETEROGENEOUS_LAYERS_CONFIG_ENCODED_JSON]
                        [--log-params-norm] [--log-num-zeros-in-grad]
@@ -341,7 +453,9 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--log-validation-ppl-to-tensorboard]
                        [--log-memory-to-tensorboard]
                        [--log-world-size-to-tensorboard]
+                       [--log-max-attention-logit]
                        [--wandb-project WANDB_PROJECT]
+                       [--wandb-entity WANDB_ENTITY]
                        [--wandb-exp-name WANDB_EXP_NAME]
                        [--wandb-save-dir WANDB_SAVE_DIR]
                        [--logging-level LOGGING_LEVEL] [--log-straggler]
@@ -356,31 +470,47 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--flash-decode] [--enable-cuda-graph]
                        [--cuda-graph-warmup-steps CUDA_GRAPH_WARMUP_STEPS]
                        [--external-cuda-graph]
-                       [--cuda-graph-scope {full,attn,full_iteration}]
+                       [--cuda-graph-impl {none,local,transformer_engine}]
+                       [--cuda-graph-scope CUDA_GRAPH_SCOPE [CUDA_GRAPH_SCOPE ...]]
+                       [--use-legacy-static-engine]
                        [--inference-max-requests INFERENCE_MAX_BATCH_SIZE]
                        [--inference-max-seq-length INFERENCE_MAX_SEQ_LENGTH]
+                       [--inference-max-batch-size INFERENCE_MAX_BATCH_SIZE]
                        [--inference-dynamic-batching]
                        [--inference-dynamic-batching-buffer-size-gb INFERENCE_DYNAMIC_BATCHING_BUFFER_SIZE_GB]
-                       [--inference-dynamic-batching-chunk-size INFERENCE_DYNAMIC_BATCHING_CHUNK_SIZE]
-                       [--inference-dynamic-batching-buffer-guaranteed-fraction INFERENCE_DYNAMIC_BATCHING_BUFFER_GUARANTEED_FRACTION]
-                       [--inference-dynamic-batching-buffer-overflow-factor INFERENCE_DYNAMIC_BATCHING_BUFFER_OVERFLOW_FACTOR]
-                       [--inference-dynamic-batching-max-requests-override INFERENCE_DYNAMIC_BATCHING_MAX_REQUESTS_OVERRIDE]
-                       [--inference-dynamic-batching-max-tokens-override INFERENCE_DYNAMIC_BATCHING_MAX_TOKENS_OVERRIDE]
+                       [--inference-dynamic-batching-paused-buffer-size-gb INFERENCE_DYNAMIC_BATCHING_PAUSED_BUFFER_SIZE_GB]
+                       [--inference-dynamic-batching-block-size INFERENCE_DYNAMIC_BATCHING_BLOCK_SIZE]
+                       [--inference-dynamic-batching-max-requests INFERENCE_DYNAMIC_BATCHING_MAX_REQUESTS]
+                       [--inference-dynamic-batching-max-tokens INFERENCE_DYNAMIC_BATCHING_MAX_TOKENS]
                        [--inference-dynamic-batching-num-cuda-graphs INFERENCE_DYNAMIC_BATCHING_NUM_CUDA_GRAPHS]
+                       [--inference-dynamic-batching-track-paused-request-events]
+                       [--decode-only-cuda-graphs]
+                       [--inference-dynamic-batching-unified-memory-level {0,1}]
                        [--symmetric-ar-type {two_shot,one_shot,multimem_all_reduce,None}]
                        [--nccl-all-reduce-for-prefill]
                        [--mlp-chunks-for-prefill MLP_CHUNKS_FOR_PREFILL]
+                       [--disable-chunked-prefill]
+                       [--inference-dynamic-batching-cuda-graph-max-tokens INFERENCE_DYNAMIC_BATCHING_CUDA_GRAPH_MAX_TOKENS]
+                       [--inference-dynamic-batching-cuda-graph-mixed-prefill-count INFERENCE_DYNAMIC_BATCHING_CUDA_GRAPH_MIXED_PREFILL_COUNT]
+                       [--inference-logging-step-interval INFERENCE_LOGGING_STEP_INTERVAL]
+                       [--inference-wandb-logging | --no-inference-wandb-logging]
+                       [--inference-coordinator-port INFERENCE_COORDINATOR_PORT]
+                       [--inference-fuse-tp-communication]
                        [--fp8-format {e4m3,hybrid}]
-                       [--fp8-recipe {tensorwise,delayed,mxfp8,blockwise}]
+                       [--fp8-recipe {tensorwise,delayed,mxfp8,blockwise,custom}]
+                       [--fp8-quantizer-factory FP8_QUANTIZER_FACTORY]
                        [--fp8-margin FP8_MARGIN] [--fp8-interval FP8_INTERVAL]
                        [--fp8-amax-history-len FP8_AMAX_HISTORY_LEN]
                        [--fp8-amax-compute-algo {most_recent,max}]
                        [--no-fp8-wgrad]
-                       [--transformer-impl {local,transformer_engine}]
+                       [--transformer-impl {local,transformer_engine,inference_optimized}]
                        [--fp8-param-gather] [--first-last-layers-bf16]
                        [--num-layers-at-start-in-bf16 NUM_LAYERS_AT_START_IN_BF16]
                        [--num-layers-at-end-in-bf16 NUM_LAYERS_AT_END_IN_BF16]
-                       [--te-rng-tracker] [--inference-rng-tracker]
+                       [--fp4-format {e2m1}] [--fp4-recipe {nvfp4,custom}]
+                       [--fp4-quantizer-factory FP4_QUANTIZER_FACTORY]
+                       [--fp4-param-gather]
+                       [--te-precision-config-file TE_PRECISION_CONFIG_FILE]
                        [--retro-project-dir RETRO_PROJECT_DIR]
                        [--retro-add-retriever]
                        [--retro-cyclic-train-iters RETRO_CYCLIC_TRAIN_ITERS]
@@ -432,9 +562,10 @@ usage: pretrain_gpt.py [-h] [--num-layers NUM_LAYERS]
                        [--error-injection-rate ERROR_INJECTION_RATE]
                        [--error-injection-type {correct_result,transient_error,persistent_error}]
                        [--rerun-mode {disabled,validate_results,report_stats}]
-                       [--disable-msc]
+                       [--check-for-spiky-loss] [--disable-msc]
                        [--kitchen-config-file KITCHEN_CONFIG_FILE | --kitchen-recipe-number KITCHEN_RECIPE_NUMBER]
-                       [--sft]
+                       [--use-kitchen-attention]
+                       [--kitchen-attention-backend {fa,sdpa}] [--sft]
                        [--sft-tokenizer-prompt-format SFT_TOKENIZER_PROMPT_FORMAT]
 
 Megatron-LM Arguments
@@ -450,7 +581,7 @@ network size:
   --decoder-num-layers DECODER_NUM_LAYERS
                         Number of decoder transformer layers.
   --hidden-size HIDDEN_SIZE
-                        Tansformer hidden size.
+                        Transformer hidden size.
   --ffn-hidden-size FFN_HIDDEN_SIZE
                         Transformer Feed-Forward Network hidden size. This is
                         set to 4*hidden-size if not provided
@@ -466,6 +597,22 @@ network size:
   --group-query-attention
                         Use group-query attention.
   --num-query-groups NUM_QUERY_GROUPS
+  --attention-output-gate
+                        Whether to apply output gate to the attention.
+  --softmax-type {learnable,vanilla,off-by-one}
+                        Type of softmax to use for the attention. Supports
+                        both a fixed offset and learnable offset.
+  --window-size WINDOW_SIZE
+                        Window size for window attention. If not provided,
+                        window attention will be disabled.
+  --window-attn-skip-freq WINDOW_ATTN_SKIP_FREQ
+                        Frequency of layers to skip window attention. Accepts
+                        either: - An integer N: Represents a (N-1):1 ratio,
+                        meaning one full attention layer after (N-1) SWA
+                        layers. - A string containing a Python list expression
+                        that defines a custom pattern, e.g.: "[1,1,1,0]*3"
+                        evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1
+                        indicates SWA and 0 indicates full attention.
   --max-position-embeddings MAX_POSITION_EMBEDDINGS
                         Maximum number of position embeddings to use. This is
                         the size of position embedding.
@@ -525,6 +672,15 @@ network size:
   --squared-relu        Use squared relu activation instead of default gelu
   --swiglu              Use gated linear units and SiLU activation instead of
                         default gelu
+  --quick-geglu         Use quick geglu activation instead of default gelu
+  --activation-func-clamp-value ACTIVATION_FUNC_CLAMP_VALUE
+                        Clamp the output of the linear_fc1 in the activation
+                        function. Only used when activation_func is
+                        quick_gelu.
+  --glu-linear-offset GLU_LINEAR_OFFSET
+                        Offset term in the GLU activation function:
+                        activation_func(x[0]) * (x[1] + offset). Only used
+                        when gated_linear_unit is True
   --onnx-safe ONNX_SAFE
                         Use workarounds for known problems with Torch ONNX
                         exporter
@@ -546,6 +702,9 @@ network size:
                         depths, and multiply it the scaling factor to obtain
                         the overall MTP loss, which serves as an additional
                         training objective.
+  --moe-latent-size MOE_LATENT_SIZE
+                        Latent projection dimension for MoE. If None, MoE
+                        latent projections are not used.
 
 regularization:
   --attention-dropout ATTENTION_DROPOUT
@@ -554,14 +713,8 @@ regularization:
                         Dropout probability for hidden state transformer.
   --weight-decay WEIGHT_DECAY
                         Weight decay coefficient for L2 regularization.
-  --start-weight-decay START_WEIGHT_DECAY
-                        Initial weight decay coefficient for L2
-                        regularization.
-  --end-weight-decay END_WEIGHT_DECAY
-                        End of run weight decay coefficient for L2
-                        regularization.
-  --weight-decay-incr-style {constant,linear,cosine}
-                        Weight decay increment function.
+  --apply-wd-to-qk-layernorm
+                        Apply weight decay to qk layernorm as a special case.
   --clip-grad CLIP_GRAD
                         Gradient clipping based on global L2 norm.
   --adam-beta1 ADAM_BETA1
@@ -574,38 +727,131 @@ regularization:
                         stability
   --sgd-momentum SGD_MOMENTUM
                         Momentum factor for sgd
+  --muon-momentum MUON_MOMENTUM
+                        Momentum factor for Muon optimizer
+  --muon-no-split-qkv   Whether to split QKV parameters for Muon optimizer
+  --muon-use-nesterov   Whether to use Nesterov-style momentum in the internal
+                        SGD
+  --muon-scale-mode {spectral,unit_rms_norm,shape_scaling}
+                        Scale mode for Muon optimizer
+  --muon-fp32-matmul-prec {low,medium,high}
+                        FP32 matmul precision for Newton-Schulz iteration
+  --muon-num-ns-steps MUON_NUM_NS_STEPS
+                        Number of Newton-Schulz steps for Muon optimizer
+  --muon-tp-mode {blockwise,duplicated,distributed}
+                        How to perform NS calculation for tensor model
+                        parallel weights
+  --muon-extra-scale-factor MUON_EXTRA_SCALE_FACTOR
+                        Additional scale factor for the muon update
+  --no-weight-decay-cond-type {apply_wd_to_qk_layernorm}
+                        Type of no weight decay condition. Choices: None
+                        (default): apply weight decay to 1D weights and
+                        biases."apply_wd_to_qk_layernorm": additionally apply
+                        weight decay to qk layernorm as a special
+                        case.DEPRECATED. Please use --apply-wd-to-qk-layernorm
+                        instead.
+
+profiling:
+  Configuration settings for profiling the training process.
+
+  --profile             Enable nsys profiling. When using this option, nsys
+                        options should be specified in commandline. An example
+                        nsys commandline is `nsys profile -s none -t nvtx,cuda
+                        -o <path/to/output_file> --force-overwrite true
+                        --capture-range=cudaProfilerApi --capture-range-
+                        end=stop`.
+  --profile-step-start PROFILE_STEP_START
+                        Global step to start profiling.
+  --profile-step-end PROFILE_STEP_END
+                        Global step to stop profiling.
+  --use-pytorch-profiler
+                        Use the built-in pytorch profiler. Useful if you wish
+                        to view profiles in tensorboard.
+  --profile-ranks PROFILE_RANKS [PROFILE_RANKS ...]
+                        Global ranks to profile.
+  --record-memory-history
+                        Record memory history in last rank.
+  --memory-snapshot-path MEMORY_SNAPSHOT_PATH
+                        Specifies where to dump the memory history pickle.
 
 training:
+  Configuration settings related to the training loop.
+
   --micro-batch-size MICRO_BATCH_SIZE
                         Batch size per model instance (local batch size).
                         Global batch size is local batch size times data
                         parallel size times number of micro batches.
-  --batch-size BATCH_SIZE
-                        Old batch size parameter, do not use. Use --micro-
-                        batch-size instead
   --global-batch-size GLOBAL_BATCH_SIZE
                         Training batch size. If set, it should be a multiple
                         of micro-batch-size times data-parallel-size. If this
                         value is None, then use micro-batch-size * data-
                         parallel-size as the global batch size. This choice
                         will result in 1 for number of micro-batches.
-  --rampup-batch-size [RAMPUP_BATCH_SIZE ...]
-                        Batch size ramp up with the following values:
-                        --rampup-batch-size <start batch size> <batch size
-                        incerement> <ramp-up samples> For example: --rampup-
-                        batch-size 16 8 300000 \ --global-batch-size 1024will
-                        start with global batch size 16 and over (1024 - 16) /
-                        8 = 126 intervals will increasethe batch size linearly
-                        to 1024. In each intervalwe will use approximately
-                        300000 / 126 = 2380 samples.
+  --rampup-batch-size RAMPUP_BATCH_SIZE RAMPUP_BATCH_SIZE RAMPUP_BATCH_SIZE
+                        Batch size ramp up with the following values: <start
+                        batch size>, <batch size increment>, <ramp-up samples>
+                        For example: rampup-batch-size = [16, 8, 300000]
+                        global-batch-size 1024 will start with global batch
+                        size 16 and over (1024 - 16) / 8 = 126 intervals will
+                        increase the batch size linearly to 1024. In each
+                        interval we will use approximately 300000 / 126 = 2380
+                        samples.
   --decrease-batch-size-if-needed
                         If set, decrease batch size if microbatch_size *
-                        dp_sizedoes not divide batch_size. Useful for KSO
-                        (Keep Soldiering On)to continue making progress if
-                        number of healthy GPUs (andcorresponding dp_size) does
-                        not support current batch_size.Old batch_size will be
-                        restored if training is re-started withdp_size that
-                        divides batch_size // microbatch_size.
+                        dp_size does not divide batch_size. Old batch_size
+                        will be restored if training is re-started with
+                        dp_size that divides batch_size // microbatch_size.
+  --empty-unused-memory-level {0,1,2}
+                        Call torch.cuda.empty_cache() each iteration (training
+                        and eval), to reduce fragmentation. 0=off, 1=moderate,
+                        2=aggressive.
+  --check-weight-hash-across-dp-replicas-interval CHECK_WEIGHT_HASH_ACROSS_DP_REPLICAS_INTERVAL
+                        Interval to check weight hashes are same across DP
+                        replicas. If not specified, weight hashes not checked.
+  --train-sync-interval TRAIN_SYNC_INTERVAL
+                        Training CPU-GPU synchronization interval, to ensure
+                        that CPU is not running too far ahead of GPU.
+  --train-iters TRAIN_ITERS
+                        Total number of iterations to train over all training
+                        runs. Note that either train_iters or train_samples
+                        should be provided.
+  --train-samples TRAIN_SAMPLES
+                        Total number of samples to train over all training
+                        runs. Note that either train_iters or train_samples
+                        should be provided.
+  --exit-interval EXIT_INTERVAL
+                        Exit the program after the iteration is divisible by
+                        this value.
+  --exit-duration-in-mins EXIT_DURATION_IN_MINS
+                        Exit the program after this many minutes.
+  --exit-signal-handler
+                        Dynamically save the checkpoint and shutdown the
+                        training if SIGTERM is received
+  --exit-signal {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,34,64}
+                        Signal for the signal handler to detect.
+  --exit-signal-handler-for-dataloader
+                        Use signal handler for dataloader workers
+  --manual-gc           Disable the threshold-based default garbage collector
+                        and trigger the garbage collection manually. Manual
+                        garbage collection helps to align the timing of the
+                        collection across ranks which mitigates the impact of
+                        CPU-associated jitters. When the manual gc is enabled,
+                        garbage collection is performed only at the start and
+                        the end of the validation routine by default.
+  --manual-gc-interval MANUAL_GC_INTERVAL
+                        Training step interval to trigger manual garbage
+                        collection. Values > 0 will trigger garbage
+                        collections between training steps.
+  --no-manual-gc-eval, --disable-manual-gc-eval
+                        When using manual garbage collection, this controls
+                        garbage collection at the start and the end of each
+                        evaluation run.
+  --iterations-to-skip ITERATIONS_TO_SKIP [ITERATIONS_TO_SKIP ...]
+                        List of iterations to skip during training, empty by
+                        default.
+  --batch-size BATCH_SIZE
+                        Old batch size parameter, do not use. Use --micro-
+                        batch-size instead
   --recompute-activations
                         recompute activation to allow for training with larger
                         models, sequences, and batch sizes.
@@ -618,8 +864,6 @@ training:
                         default is core_attn.
   --no-check-for-nan-in-loss-and-grad
                         Check for NaNs in loss and grad
-  --check-for-spiky-loss
-                        Check for spiky loss
   --check-for-large-grads
                         Check for unexpectedly large grads
   --distribute-saved-activations
@@ -654,35 +898,16 @@ training:
                         "mla_up_proj" use output-discarding checkpointing,
                         "core_attn", "mlp", "moe", and "shared_experts" use
                         normal checkpointing.
+  --cpu-offloading-num-layers CPU_OFFLOADING_NUM_LAYERS
+                        The number of Transformer layers to offload to CPU.
   --no-clone-scatter-output-in-embedding
                         If not set, clone the output of the scatter in
                         embedding layer to GC original tensor.
-  --profile             Enable nsys profiling. When using this option, nsys
-                        options should be specified in commandline. An example
-                        nsys commandline is `nsys profile -s none -t nvtx,cuda
-                        -o <path/to/output_file> --force-overwrite true
-                        --capture-range=cudaProfilerApi --capture-range-
-                        end=stop`.
-  --profile-step-start PROFILE_STEP_START
-                        Global step to start profiling.
-  --profile-step-end PROFILE_STEP_END
-                        Global step to stop profiling.
-  --iterations-to-skip ITERATIONS_TO_SKIP [ITERATIONS_TO_SKIP ...]
-                        List of iterations to skip, empty by default.
   --result-rejected-tracker-filename RESULT_REJECTED_TRACKER_FILENAME
                         Optional name of file tracking `result_rejected`
                         events.
   --disable-gloo-process-groups
                         Disables creation and usage of Gloo process groups.
-  --use-pytorch-profiler
-                        Use the built-in pytorch profiler. Useful if you wish
-                        to view profiles in tensorboard.
-  --profile-ranks PROFILE_RANKS [PROFILE_RANKS ...]
-                        Global ranks to profile.
-  --record-memory-history
-                        Record memory history in last rank.
-  --memory-snapshot-path MEMORY_SNAPSHOT_PATH
-                        Specifies where to dump the memory history pickle.
   --tp-comm-overlap     Enables the overlap of Tensor parallel communication
                         and GEMM kernels.
   --tp-comm-overlap-cfg TP_COMM_OVERLAP_CFG
@@ -707,44 +932,18 @@ training:
   --use-cpu-initialization
                         If set, initialize weights on the CPU. This eliminates
                         init differences based on tensor parallelism.
-  --empty-unused-memory-level {0,1,2}
-                        Call torch.cuda.empty_cache() each iteration (training
-                        and eval), to reduce fragmentation.0=off, 1=moderate,
-                        2=aggressive.
   --deterministic-mode  Choose code that has deterministic execution. This
                         usually means slower execution, but is good for
                         debugging and testing.
-  --check-weight-hash-across-dp-replicas-interval CHECK_WEIGHT_HASH_ACROSS_DP_REPLICAS_INTERVAL
-                        Interval to check weight hashes are same across DP
-                        replicas. If not specified, weight hashes not checked.
   --calculate-per-token-loss
                         Scale cross entropy loss by the number of non-padded
                         tokens in the global batch, versus the default
                         behavior of assuming all tokens are non-padded.
-  --train-sync-interval TRAIN_SYNC_INTERVAL
-                        Training CPU-GPU synchronization interval, to ensure
-                        that CPU is not running too far ahead of GPU.
   --checkpoint-activations
                         Checkpoint activation to allow for training with
                         larger models, sequences, and batch sizes.
-  --train-iters TRAIN_ITERS
-                        Total number of iterations to train over all training
-                        runs. Note that either train-iters or train-samples
-                        should be provided.
-  --train-samples TRAIN_SAMPLES
-                        Total number of samples to train over all training
-                        runs. Note that either train-iters or train-samples
-                        should be provided.
   --log-interval LOG_INTERVAL
                         Report loss and timing interval.
-  --exit-interval EXIT_INTERVAL
-                        Exit the program after the iteration is divisible by
-                        this value.
-  --exit-duration-in-mins EXIT_DURATION_IN_MINS
-                        Exit the program after this many minutes.
-  --exit-signal-handler
-                        Dynamically save the checkpoint and shutdown the
-                        training if SIGTERM is received
   --tensorboard-dir TENSORBOARD_DIR
                         Write TensorBoard logs to this directory.
   --no-masked-softmax-fusion
@@ -773,7 +972,13 @@ training:
   --disable-bias-linear
                         Disable bias in the linear layers
   --add-qkv-bias        Enable bias only in the QKV linear layers
-  --optimizer {adam,sgd}
+  --qk-clip             Whether to use qk-clip for training stabilization,
+                        strongly recommended for Muon.
+  --qk-clip-alpha QK_CLIP_ALPHA
+                        The balancing alpha for qk-clip.
+  --qk-clip-threshold QK_CLIP_THRESHOLD
+                        The balancing threshold for qk-clip.
+  --optimizer {adam,sgd,muon,dist_muon}
                         Optimizer function
   --optimizer-cpu-offload
                         Offload optimizer state to CPU
@@ -785,6 +990,11 @@ training:
   --overlap-cpu-optimizer-d2h-h2d
                         Overlap CPU optimizer step, gradients D2H and updated
                         parameters H2D.
+  --dump-param-to-param-group-map DUMP_PARAM_TO_PARAM_GROUP_MAP
+                        Path to a file containing parameter-to-parameter-group
+                        mapping. Provide a JSON file that specifies which
+                        parameters belong to which parameter group for global
+                        coordination.
   --no-pin-cpu-grads    Disable pinning of CPU memory for gradients.
   --no-pin-cpu-params   Disable pinning of CPU memory for parameters.
   --dataloader-type {single,cyclic,external}
@@ -805,20 +1015,6 @@ training:
                         --use-legacy-models to not use core models.
   --use-legacy-models   Use the legacy Megatron models, not Megatron-Core
                         models.
-  --manual-gc           Disable the threshold-based default garbage collector
-                        and trigger the garbage collection manually. Manual
-                        garbage collection helps to align the timing of the
-                        collection across ranks which mitigates the impact of
-                        CPU-associated jitters. When the manual gc is enabled,
-                        garbage collection is performed only at the start and
-                        the end of the validation routine by default.
-  --manual-gc-interval MANUAL_GC_INTERVAL
-                        Training step interval to trigger manual garbage
-                        collection. When the value is set to 0, garbage
-                        collection is not triggered between training steps.
-  --no-manual-gc-eval   When using manual garbage collection, disable garbage
-                        collection at the start and the end of each evaluation
-                        run.
   --disable-tp-comm-split-ag
                         Disables the All-Gather overlap with fprop GEMM.
   --disable-tp-comm-split-rs
@@ -830,9 +1026,148 @@ training:
   --high-priority-stream-groups [HIGH_PRIORITY_STREAM_GROUPS ...]
                         The communicator group names to use high priority
                         streams.
+  --use-te-activation-func
+                        Use activation function kernel from Transformer Engine
+                        in MLP module.
+  --fine-grained-activation-offloading
+                        Enable fine-grained activation offloading.
+  --offload-modules [OFFLOAD_MODULES ...]
+                        The submodules to offload its input. Choices:
+                        "attn_norm", "qkv_linear", "core_attn", "attn_proj",
+                        "mlp_norm", "expert_fc1", "moe_act".
+  --min-offloaded-tensor-size MIN_OFFLOADED_TENSOR_SIZE
+                        The minimum size of the tensor to be offloaded.
+  --batch-invariant-mode
+                        Use batch-invariant kernels for deterministic forward
+                        execution regardless of batch size. Ensures bitwise
+                        identical results when the same inputs are processed
+                        in different batch configurations. This is more strict
+                        than deterministic-mode which only ensures bitwise
+                        identical results when the same inputs are processed
+                        in the same batch configuration. This will
+                        significantly affect speed of training and inference
+                        as the kernels are not full optimized.
+  --disable-jit-fuser   Disable the JIT fuser.
 
-initialization:
+rl:
+  --perform-rl-step     Use the RL training step.
+  --rl-prompts-per-eval RL_PROMPTS_PER_EVAL
+                        Number of prompts to evaluate for for each RL
+                        task.This evaluation can be very expensive when using
+                        environmentsthat evaluate pass@k so we default to a
+                        lower number.
+  --grpo-prompts-per-step GRPO_PROMPTS_PER_STEP
+                        Number of GRPO groups (G in the paper).
+  --grpo-group-size GRPO_GROUP_SIZE
+                        Number of samples per a GRPO group.
+  --grpo-iterations GRPO_ITERATIONS
+                        Number of iterations per a GRPO implementation.
+  --grpo-clamp-eps-lower GRPO_CLAMP_EPS_LOWER
+                        Lower GRPO clipping bound.
+  --grpo-clamp-eps-upper GRPO_CLAMP_EPS_UPPER
+                        Upper GRPO clipping bound. In vanilla implementation,
+                        equals to the lower one.
+  --grpo-kl-beta GRPO_KL_BETA
+                        KL term weight in the GRPO loss.
+  --grpo-entropy-term-weight GRPO_ENTROPY_TERM_WEIGHT
+                        Entropy term weight in GRPO loss.
+  --grpo-filter-groups-with-same-reward
+                        Filter groups with same reward.
+  --langrl-inference-server-type {inplace_megatron,inplace_megatron_chat}
+                        Type of inference server to use.
+  --langrl-inference-server-conversation-template LANGRL_INFERENCE_SERVER_CONVERSATION_TEMPLATE
+                        Conversation template, if using a chat server.
+  --langrl-external-server, --no-langrl-external-server
+  --langrl-env-config LANGRL_ENV_CONFIG
+                        Path to YAML config file for RL environment
+                        configuration.
+  --rl-default-temperature RL_DEFAULT_TEMPERATURE
+                        Default temperature for model inference.
+  --rl-default-top-p RL_DEFAULT_TOP_P
+                        Default top-p for model inference.
+  --rl-default-top-k RL_DEFAULT_TOP_K
+                        Default top-k for model inference.
+  --rl-offload-optimizer-during-inference
+                        Offload optimizer state to CPU during
+                        inference/rollout to save GPU memory
+  --rl-offload-kv-cache-during-training, --no-rl-offload-kv-cache-during-training
+                        Offload KV cache to CPU during training to save GPU
+                        memory
+  --rl-remove-kv-cache-during-training, --no-rl-remove-kv-cache-during-training
+                        Remove KV cache during training to save GPU memory
+  --rl-reset-cuda-graphs, --no-rl-reset-cuda-graphs
+                        Reset CUDA graphs between inference/training to save
+                        GPU memory
+  --rl-partial-rollouts, --no-rl-partial-rollouts
+                        If set, use partial rollouts.
+  --rl-inference-logprobs-is-correction, --no-rl-inference-logprobs-is-correction
+                        If set, use inference logprobs in importance sampling
+                        correction of the loss.
+  --rl-importance-sampling-truncation-coef RL_IMPORTANCE_SAMPLING_TRUNCATION_COEF
+                        If --inference-logprobs-is-correction is on and this
+                        coefficient is set, apply truncation for the IS
+                        correction at GRPO loss.
+  --rl-calculate-intra-group-similarity, --no-rl-calculate-intra-group-similarity
+                        If set, calculate the intra-group similarity of
+                        rollouts.
+  --rl-use-sequence-packing, --no-rl-use-sequence-packing
+                        Enable sequence packing
+  --rl-sequence-packing-max-sequences-per-bin RL_SEQUENCE_PACKING_MAX_SEQUENCES_PER_BIN
+                        Maximum number of sequences that can be packed into a
+                        single bin.
+  --rl-sequence-packing-algo {fifo,round-robin}
+                        Algorithm for distributing packed bins across ranks.
+                        fifo: first-in-first-out sequential distribution,
+                        round-robin: distribute bins cyclically across ranks
+                        for better load balancing
+  --rl-training-cuda-graphs, --no-rl-training-cuda-graphs
+                        If set, do not call `delete_cuda_graphs` or
+                        `toggle_cuda_graphs` when the inference engine is
+                        suspended. Use only when all training and inference
+                        cudagraphs and the KV cache fit on device.
+  --rl-inference-tensor-model-parallel-size RL_INFERENCE_TENSOR_MODEL_PARALLEL_SIZE
+                        Degree of tensor model parallelism for inference for
+                        RL.
+  --rl-inference-pipeline-model-parallel-size RL_INFERENCE_PIPELINE_MODEL_PARALLEL_SIZE
+                        Degree of pipeline model parallelism for inference for
+                        RL.
+  --rl-inference-model-unified-memory-level {0,1}
+                        Allocate the separate RL inference model parameters
+                        from a unified virtual memory (UVM) CUDA mempool.
+                        Level 0 disables UVM (default). Level 1 enables UVM
+                        allocation so the inference model weights can be
+                        prefetched to CPU when idle while keeping CUDA-graph-
+                        safe device pointers.
+  --rl-offload-inference-model-weights-when-idle, --no-rl-offload-inference-model-weights-when-idle
+                        When using a separate RL inference model with UVM-
+                        enabled parameters, prefetch its weights to CPU when
+                        not doing rollout inference, and prefetch back to GPU
+                        right before inference. Requires --rl-inference-model-
+                        unified-memory-level=1.
+  --refit-method {nccl,gloo}
+                        Method to refit the model weights between training and
+                        inference models during RL. nccl: use NCCLCopyService
+                        to refit using NCCL; gloo: use GlooCopyService over
+                        CPU;
+  --rl-verify-model-weights-swap, --no-rl-verify-model-weights-swap
+                        If set, verify that the model weights were correctly
+                        transferred by comparing forward pass outputs onthe
+                        first swap of model weights.
+  --rl-parallel-generation-tasks RL_PARALLEL_GENERATION_TASKS
+                        Number of parallel generation tasks for RL inference.
+  --rl-skip-bos-token, --no-rl-skip-bos-token
+                        Skip BOS token at the beginning of the sequences.
+                        Default is False.
+
+RNG and initialization:
+  Configuration settings for random number generation.
+
   --seed SEED           Random seed used for python, numpy, pytorch, and cuda.
+  --te-rng-tracker      Use the Transformer Engine version of the random
+                        number generator. Required for CUDA graphs support.
+  --inference-rng-tracker
+                        Use a random number generator configured for
+                        inference.
   --data-parallel-random-init
                         Enable random initialization of params across data
                         parallel ranks
@@ -851,26 +1186,25 @@ initialization:
   --init-method-xavier-uniform
                         Enable Xavier uniform parameter initialization
 
-learning rate:
-  --lr LR               Initial learning rate. Depending on decay style and
-                        initial warmup, the learning rate at each iteration
-                        would be different.
+learning rate and weight decay:
+  Configuration settings for the learning rate scheduler and weight decay.
+
   --lr-decay-style {constant,linear,cosine,inverse-square-root,WSD}
                         Learning rate decay function.
   --lr-wsd-decay-style {exponential,linear,cosine,minus_sqrt}
                         Decay style for the annealing phase of WSD
   --lr-decay-iters LR_DECAY_ITERS
                         number of iterations to decay learning rate over, If
-                        None defaults to `--train-iters`
+                        None defaults to train iters
   --lr-decay-samples LR_DECAY_SAMPLES
                         number of samples to decay learning rate over, If None
-                        defaults to `--train-samples`
-  --lr-wsd-decay-samples LR_WSD_DECAY_SAMPLES
-                        number of samples for the annealing phase in the wsd
-                        schedule
+                        defaults to train samples
   --lr-wsd-decay-iters LR_WSD_DECAY_ITERS
                         number of iterations for the annealing phase in the
                         wsd schedule
+  --lr-wsd-decay-samples LR_WSD_DECAY_SAMPLES
+                        number of samples for the annealing phase in the wsd
+                        schedule
   --lr-warmup-fraction LR_WARMUP_FRACTION
                         fraction of lr-warmup-(iters/samples) to use for
                         warmup (as a float)
@@ -883,21 +1217,32 @@ learning rate:
   --lr-warmup-init LR_WARMUP_INIT
                         Initial value for learning rate warmup. The scheduler
                         starts warmup from this value.
+  --override-opt_param-scheduler, --override-opt-param-scheduler
+                        Reset the values of the scheduler (learning rate,
+                        warmup iterations, minimum learning rate, maximum
+                        number of iterations, and decay style) from input
+                        arguments and ignore values from checkpoints. Note
+                        that all the above values will be reset.
+  --use-checkpoint-opt_param-scheduler, --use-checkpoint-opt-param-scheduler
+                        Use checkpoint to set the values of the scheduler
+                        (learning rate, warmup iterations, minimum learning
+                        rate, maximum number of iterations, and decay style)
+                        from checkpoint and ignore input arguments.
+  --start-weight-decay START_WEIGHT_DECAY
+                        Initial weight decay coefficient for L2
+                        regularization.
+  --end-weight-decay END_WEIGHT_DECAY
+                        End of run weight decay coefficient for L2
+                        regularization.
+  --weight-decay-incr-style {constant,linear,cosine}
+                        Weight decay increment function.
+  --lr LR               Initial learning rate. Depending on decay style and
+                        initial warmup, the learning rate at each iteration
+                        would be different.
   --warmup WARMUP       Old lr warmup argument, do not use. Use one of the--
                         lr-warmup-* arguments above
   --min-lr MIN_LR       Minimum value for learning rate. The schedulerclip
                         values below this threshold.
-  --override-opt_param-scheduler
-                        Reset the values of the scheduler (learning
-                        rate,warmup iterations, minimum learning rate, maximum
-                        number of iterations, and decay style from input
-                        arguments and ignore values from checkpoints. Notethat
-                        all the above values will be reset.
-  --use-checkpoint-opt_param-scheduler
-                        Use checkpoint to set the values of the scheduler
-                        (learning rate, warmup iterations, minimum learning
-                        rate, maximum number of iterations, and decay style
-                        from checkpoint and ignore input arguments.
   --decoupled-lr DECOUPLED_LR
                         Separate learning rate for the input and output layer
   --decoupled-min-lr DECOUPLED_MIN_LR
@@ -975,14 +1320,14 @@ checkpointing:
                         down loading a bit (double rank0 ckpt load).
   --dist-ckpt-format DIST_CKPT_FORMAT_DEPRECATED
                         Deprecated: see --ckpt-format.
-  --ckpt-format {torch,torch_dist,zarr,torch_dcp,fsdp_dtensor}
+  --ckpt-format {torch,torch_dist,torch_dcp,fsdp_dtensor}
                         Checkpoint format to use. torch is the format used by
                         torch.save/load. torch_dist is a megatron built-in
                         distributed checkpointing format. torch_dcp is the
                         torch.distributed.checkpoint format. fsdp_dtensor is a
                         torch DCP native, Megatron FSDP training-specific
                         checkpoint format.
-  --ckpt-convert-format {torch,torch_dist,zarr}
+  --ckpt-convert-format {torch,torch_dist}
                         Checkpoint format for conversion.
   --ckpt-convert-save CKPT_CONVERT_SAVE
                         Save directory for converted checkpoint.
@@ -1015,10 +1360,17 @@ checkpointing:
                         NOTE: This flag controls only distributed checkpoint
                         load from storage, not loading state dict into the
                         model.
-  --load-model-opt-format
-                        Load a checkpoint for TensorRT model optimizer
-                        (nvidia-modelopt).This function can also be used to
-                        load NeMo .nemo sharded checkpoints.
+  --dist-ckpt-optim-fully-reshardable
+                        Make optimizer distributed checkpoint fully
+                        reshardable (TP/PP/EP/DP) as opposed to plain DP
+                        reshardability.
+  --distrib-optim-fully-reshardable-mem-efficient
+                        During distributed optimizer checkpoint save and load
+                        tries to use as little memory as possible by using
+                        Gloo (instead of NCCL) and only one rank for saving.
+                        Turn on only if experiencing host or device memory
+                        issues. Has affect only with `--dist-ckpt-optim-fully-
+                        reshardable` flag.
 
 mixed precision:
   --fp16                Run model in fp16 mode.
@@ -1100,7 +1452,11 @@ distributed:
   --distributed-backend {nccl,gloo}
                         Which backend to use for distributed training.
   --distributed-timeout-minutes DISTRIBUTED_TIMEOUT_MINUTES
-                        Timeout minutes for torch.distributed.
+                        Default timeout minutes for torch.distributed.
+  --distributed-timeout-seconds-after-init DISTRIBUTED_TIMEOUT_SECONDS_AFTER_INIT
+                        Timeout seconds for process groups after
+                        initialization.This timeout is applied to all process
+                        groups after initialization.
   --overlap-grad-reduce
                         If set, overlap DDP grad reduce.
   --defer-embedding-wgrad-compute
@@ -1127,6 +1483,12 @@ distributed:
                         message size (which for ring algorithms is bucket_size
                         / dp_size) apparently needs to be divisible by a power
                         of 2 for high busbw.
+  --ddp-reduce-scatter-with-fp32-accumulation
+                        If set, use a reduce-scatter implementation which
+                        sends lower-precision values over the wire (using an
+                        all-to-all to keep total communication overhead in
+                        line with the standard ring implementation) but
+                        performs accumulation locally in FP32.
   --ddp-average-in-collective
                         If set, average directly in data-parallel
                         communication collective.
@@ -1168,6 +1530,15 @@ distributed:
                         communication buffers.This option will reduce GPU SM
                         usage for the DP/FSDP communication,which is improving
                         the performance of the overlapped computation.
+  --disable-symmetric-registration
+                        Disable symmetric (window) registration for NCCL
+                        userbuffer registration.This option will force to use
+                        conventional (local) userbuffer registration when use-
+                        nccl-ub is set.
+  --fsdp-manual-registration
+                        Manually register the FSDP communication buffers to
+                        NCCL user buffer.This option is only effective when
+                        use-megatron-fsdp and use-nccl-ub is set.
   --use-sharp           Required to enable SHARP communication.
   --sharp-enabled-group {dp,dp_replica}
                         IB SHARP can be enabled from only one communication
@@ -1227,6 +1598,15 @@ distributed:
                         sizes 2 4 indicates every two adjacent gpus forms the
                         first level of cp groups and the cp ranks with the
                         same odevity forms the second level of cp groups.
+  --max-seqlen-per-cp-rank MAX_SEQLEN_PER_CP_RANK
+                        Maximum sequence length per CP rank. This is used to
+                        calculate the number of sub-samples assigned to each
+                        CP rank when using heterogeneous context parallel.
+  --hybrid-context-parallel
+                        Enables hybrid context parallel. This is used to
+                        balance the workload of each CP rank when we use
+                        packed samples with variable sequence lengths.
+                        Requires --max-seqlen-per-cp-rank to be set.
   --nccl-communicator-config-path NCCL_COMMUNICATOR_CONFIG_PATH
                         Path to the yaml file with NCCL communicator
                         configurations. The number of min/max thread groups
@@ -1247,8 +1627,27 @@ distributed:
   --replication-factor REPLICATION_FACTOR
                         Number of machines storing the replica of a given
                         rank's data.
+  --fake-process-group  If set, initialize with fake distributed process group
+                        and all distributed communication operations will be
+                        skipped. This is quite useful for profiling memory
+                        usage of distributed training with just one GPU.
+                        Setting WORLD_SIZE and RANK to the specific values for
+                        target distribtued scale.
 
 validation:
+  Configuration settings related to validation during or after model
+  training.
+
+  --eval-iters EVAL_ITERS
+                        Number of iterations to run for evaluation. Used for
+                        both validation and test. If not set, evaluation will
+                        not run.
+  --eval-interval EVAL_INTERVAL
+                        Interval between running evaluation on validation set.
+                        If not set, evaluation will not run during training.
+  --skip-train          If set, bypass the training loop, perform evaluation
+                        for validation/test, and exit.
+  --test-mode           Run all real-time test alongside the experiment.
   --full-validation     If set, each time validation occurs it uses the full
                         validation dataset(s). This currently only works for
                         GPT datasets!
@@ -1256,15 +1655,7 @@ validation:
                         If set, multiple datasets listed in the validation
                         split are evaluated independently with a separate loss
                         for each dataset in the list. This argument requires
-                        that no weights are included in the list
-  --eval-iters EVAL_ITERS
-                        Number of iterations to run for
-                        evaluationvalidation/test for.
-  --eval-interval EVAL_INTERVAL
-                        Interval between running evaluation on validation set.
-  --test-mode           Run all real-time test alongside the experiment.
-  --skip-train          If set, bypass the training loop, optionally do
-                        evaluation for validation/test, and exit.
+                        that no weights are included in the list.
 
 data and dataloader:
   --data-path [DATA_PATH ...]
@@ -1277,6 +1668,10 @@ data and dataloader:
                         the lengths of the contributing datasets. This
                         argument is exclusive to the other independent
                         --*-data-path arguments.
+  --phase-transition-iterations PHASE_TRANSITION_ITERATIONS
+                        Comma-separated list of iterations where phase
+                        transitions occur. Requires fixed global batch size
+                        across phases. Does not support batch size ramp-up.
   --split SPLIT         Comma-separated list of proportions for training,
                         validation, and test split. For example the split
                         `90,5,5` will use 90% of data for training, 5% for
@@ -1305,6 +1700,18 @@ data and dataloader:
                         those arguments. This is useful when the list of data
                         is too big. Format is a json file with `train`,
                         `valid, `test` keys
+  --per-dataset-sequences-path PER_DATASET_SEQUENCES_PATH
+                        Path to a json file with the sequences per dataset.
+                        Check the tools/build_sequences_per_dataset.py script
+                        to build this file.
+  --dataloader-fast-cache-load
+                        Option to use the fast cache loading path when
+                        building the datasets. Requires all the dataset caches
+                        to be built and stored in --data-cache-path.
+  --dataloader-defer-npy-index-mmap
+                        Defer the mmap of the dataset indexes (.npy files)
+                        until the first access. Requires all the dataset
+                        caches to be built and stored in --data-cache-path.
   --data-cache-path DATA_CACHE_PATH
                         Path to a directory to hold cached index files.
   --no-mmap-bin-files   Disable mmap-ing of .bin files.
@@ -1332,8 +1739,7 @@ data and dataloader:
                         Dataloader number of workers.
   --reset-position-ids  Reset posistion ids after end-of-document token.
   --reset-attention-mask
-                        Reset self attention maske after end-of-document
-                        token.
+                        Reset self attention mask after end-of-document token.
   --eod-mask-loss       Mask loss for the end of document tokens.
   --no-create-attention-mask-in-dataloader
                         If set, do not create attention_masks in dataloader.
@@ -1346,6 +1752,48 @@ data and dataloader:
   --mid-level-dataset-surplus MID_LEVEL_DATASET_SURPLUS
                         The sample surplus to build for the mid-level
                         datasets(s)
+  --allow-ambiguous-pad-tokens
+                        Whether to prevent pad tokens already present in the
+                        dataset from being masked out when the pad token
+                        incorrectly shares the same id with other special
+                        tokens in the tokenizer. Note that this argument has
+                        no effect when the tokenizer correctly provides a
+                        unique id for the pad. Masking out such ambiguous pad
+                        tokens results in training instability. Such a
+                        scenario is best resolved by fixing the tokenizer;
+                        leaving this option as False provides a workaround.
+                        When left to the default of False, any token ids that
+                        collide with the pad token id - as provided by the
+                        tokenizer - will not be masked out of the loss
+                        calculation: it cannot be determined whether they are
+                        truly pad. If instead this argument is set, the
+                        training flow will treat all tokens that share the
+                        same id as the pad token as true pad tokens,
+                        potentially causing severe training instability.
+  --fim-data            Whether to use the FIM dataset.
+  --fim-rate FIM_RATE   Probability to convert a training sample into a FIM
+                        format.
+  --fim-spm-rate FIM_SPM_RATE
+                        Probability that the a FIM sample uses the SPM format
+                        over the PSM format.
+  --fim-split-sample FIM_SPLIT_SAMPLE
+                        String around which to split the sample for FIM.
+  --fim-fragment-rate FIM_FRAGMENT_RATE
+                        Rate of FIM on each fragment when --fim-split-sample
+                        is not None.
+  --fim-no-prefix FIM_NO_PREFIX
+                        Do not apply FIM to fragments that start with this
+                        prefix
+  --fim-prefix-token FIM_PREFIX_TOKEN
+                        FIM prefix token
+  --fim-middle-token FIM_MIDDLE_TOKEN
+                        FIM middle token
+  --fim-suffix-token FIM_SUFFIX_TOKEN
+                        FIM suffix token
+  --fim-pad-token FIM_PAD_TOKEN
+                        FIM PAD token
+  --fim-eod-token FIM_EOD_TOKEN
+                        FIM EOD token
 
 tokenizer:
   --vocab-size VOCAB_SIZE
@@ -1365,13 +1813,31 @@ tokenizer:
                         What type of tokenizer to use.
   --tokenizer-model TOKENIZER_MODEL
                         Sentencepiece tokenizer model.
+  --tokenizer-metadata TOKENIZER_METADATA
+                        Path to tokenizer metadata in json format.
+  --tokenizer-special-tokens TOKENIZER_SPECIAL_TOKENS [TOKENIZER_SPECIAL_TOKENS ...]
+                        List of special tokens. For TikTokenizer needs to have
+                        ["<unk>", "<s>", "</s>", "<mask>", "<pad>", "<cls>",
+                        "<sep>"]
+  --legacy-tokenizer    To use Megatron-LM legacy tokenizer system.
   --tiktoken-pattern TIKTOKEN_PATTERN
                         Which tiktoken pattern to use. Options: [v1, v2]
   --tiktoken-num-special-tokens TIKTOKEN_NUM_SPECIAL_TOKENS
                         Number of special tokens in tiktoken tokenizer
   --tiktoken-special-tokens TIKTOKEN_SPECIAL_TOKENS [TIKTOKEN_SPECIAL_TOKENS ...]
                         List of tiktoken special tokens, needs to have
-                        ["<unk>", "<s>", "</s>"]
+                        ["<unk>", "<s>", "</s>", "<mask>", "<pad>", "<cls>",
+                        "<sep>"]
+  --tokenizer-sentencepiece-legacy
+                        SentencePiece tokenizer wrapper legacy behavior.
+                        Allows special tokens usage.
+  --tokenizer-hf-use-fast
+                        Whether to use fast HuggingFace tokenizer.
+  --tokenizer-hf-include-special-tokens
+                        Converting text to ids will include special for
+                        HuggingFace tokenizer.
+  --trust-remote-code   Whether or not to allow PreTrainedTokenizer to execute
+                        remote code
 
 autoresume:
   --adlr-autoresume     Enable autoresume on adlr cluster.
@@ -1485,9 +1951,9 @@ moe:
                         evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1
                         indicates an expert layer and 0 indicates a dense
                         layer. Examples: "([0]+[1]*23)": 1 dense layer
-                        followed by 23 experts layers, "([1]*3+[0]*2)*2":
-                        Three expert layers followed by two dense layers,
-                        repeated twice.
+                        followed by 23 expert layers, "([1]*3+[0]*2)*2": Three
+                        expert layers followed by two dense layers, repeated
+                        twice.
   --moe-ffn-hidden-size MOE_FFN_HIDDEN_SIZE
                         The hidden size of each expert's feed-forward network
                         (ffn). If not specified, defaults to the
@@ -1496,11 +1962,22 @@ moe:
                         Shared expert total ffn hidden size. It should be
                         equal to "num_shared_experts *
                         ffn_size_of_each_shared_expert" if there are multiple
-                        shared experts. None means no shared expert.
+                        shared experts. None means no shared expert. By
+                        default, the shared experts execute before the router.
+                        However, when --moe-shared-expert-overlap or
+                        --overlap-moe-expert-parallel-comm is set, the shared
+                        experts execute after the router, before the routed
+                        experts. This makes the gradients from the router and
+                        the shared experts added in different orders to the
+                        hidden_states, causing minor numerical differences in
+                        the hidden_states gradient.
+  --moe-shared-expert-gate
+                        Enable gate for shared expert. Only effective when
+                        moe-shared-expert-intermediate-size is set.
   --moe-shared-expert-overlap
                         Enable overlapping between shared expert computations
                         and dispatcher communications. Without this, the
-                        shared epxerts execute after the routed experts. Only
+                        shared experts execute before the router. Only
                         effective when moe-shared-expert-intermediate-size is
                         set.
   --moe-grouped-gemm    When there are multiple experts per rank, launch
@@ -1521,7 +1998,7 @@ moe:
                         specified by --save. Upcycling is implemented on the
                         top of distributed checkpointing, so it supports
                         parallel modes different from the dense model.
-  --moe-router-load-balancing-type {aux_loss,seq_aux_loss,sinkhorn,none} [{aux_loss,seq_aux_loss,sinkhorn,none} ...]
+  --moe-router-load-balancing-type {aux_loss,seq_aux_loss,global_aux_loss,sinkhorn,none} [{aux_loss,seq_aux_loss,global_aux_loss,sinkhorn,none} ...]
                         Determines the load balancing strategy for the router.
                         "aux_loss" corresponds to the load balancing loss used
                         in GShard and SwitchTransformer; "seq_aux_loss"
@@ -1590,14 +2067,18 @@ moe:
                         supporting naive top-k and group-limited top-k. This
                         experimental feature is for benchmarking purposes
                         only!
-  --moe-router-padding-for-fp8
+  --moe-router-padding-for-quantization
                         Pad the routing_map to make sure the number of tokens
-                        each expert received is a multiple of 16/32 for FP8
-                        precision. It is suggested to enable this for dropless
-                        training with FP8 precision when num_local_experts >
-                        1. This is a more efficient way to pad for FP8 which
-                        eliminates the explicit padding in the GroupedMLP
-                        layer.
+                        each expert received is a multiple of 16/32 for
+                        FP8/FP4 precision. It is suggested to enable this for
+                        dropless training with FP8/FP4 precision when
+                        num_local_experts > 1. This is a more efficient way to
+                        pad for FP8/FP4 which eliminates the explicit padding
+                        in the GroupedMLP layer.
+  --moe-router-padding-for-fp8
+                        [Compatibility alias for --moe-router-padding-for-
+                        quantization] Enabling this will also enable --moe-
+                        router-padding-for-quantization.
   --moe-aux-loss-coeff MOE_AUX_LOSS_COEFF [MOE_AUX_LOSS_COEFF ...]
                         Scaling coefficient for the aux loss: a starting value
                         of 1e-2 is recommended.
@@ -1616,12 +2097,16 @@ moe:
                         recommend using 'alltoall' when applying expert
                         parallelism. For more information, please refer to the
                         documentation in core/moe/README.
-  --moe-enable-deepep   [Experimental] Enable DeepSeek/DeepEP for efficient
-                        token dispatching and combine in MoE models. Only
-                        works with flex token dispatcher by setting --moe-
-                        token-dispatcher-type=flex.
+  --moe-enable-deepep   DEPRECATED: Please use --moe-flex-dispatcher-
+                        backend=deepep instead.
+  --moe-flex-dispatcher-backend {deepep,hybridep}
+                        The backend to use for flex token dispatcher. The
+                        default is "deepep". Options are "deepep" and
+                        "hybridep".
   --moe-deepep-num-sms MOE_DEEPEP_NUM_SMS
                         Number of SMs to use for DeepEP.
+  --moe-hybridep-num-sms MOE_HYBRIDEP_NUM_SMS
+                        Number of SMs to use for HybridEP.
   --moe-permute-fusion  Fuse token rearrangement ops during token dispatching.
   --moe-expert-capacity-factor MOE_EXPERT_CAPACITY_FACTOR
                         The capacity factor for each expert, None means no
@@ -1642,6 +2127,9 @@ moe:
                         overlapping in 1f1b stage.
   --delay-wgrad-compute
                         Delay the wgrad compute for batch-level overlapping
+  --ep-overlap-early-attn-memory-release
+                        Release the memory of the attention module early in EP
+                        overlap.
   --moe-upcycling-granularity MOE_UPCYCLING_GRANULARITY
                         This param sepecifics how many times smaller is the
                         expert hidden size compared with the original dense
@@ -1649,6 +2137,13 @@ moe:
                         strategy, please set this param as a positive integer.
                         If this param is set to 1, it means using the default
                         upcycling strategy.
+  --moe-pad-experts-for-cuda-graph-inference
+                        some MoE routers have a D2H sync that will break cuda
+                        graphs. If this flag is set the router will switch to
+                        dropping and padding during decode time which does not
+                        have a D2H sync. The capacity factor is set to the max
+                        that an expert could see during inference so no tokens
+                        are actually dropped.
 
 mla:
   --q-lora-rank Q_LORA_RANK
@@ -1672,6 +2167,49 @@ mla:
                         attention.
   --cache-mla-latents   If set caches the mla down projected latents with mla
                         flash decode.
+
+experimental_attention_variant:
+  --experimental-attention-variant {gated_delta_net,dsa}
+                        Type of attention variant to use. Currently support
+                        gated_delta_net and dsa.
+  --dsa-indexer-n-heads DSA_INDEXER_N_HEADS
+                        Number of indexer heads for sparse attention. If not
+                        set, defaults to num-attention-heads.
+  --dsa-indexer-head-dim DSA_INDEXER_HEAD_DIM
+                        Dimension per indexer head for sparse attention. If
+                        not set, defaults to kv-channels.
+  --dsa-indexer-topk DSA_INDEXER_TOPK
+                        Number of top-k tokens to select in sparse attention
+                        indexer.
+  --dsa-indexer-loss-coeff DSA_INDEXER_LOSS_COEFF
+                        Coefficient for the indexer KL divergence loss. Set to
+                        0 to disable indexer loss.
+  --dsa-indexer-use-sparse-loss
+                        Use sparse indexer loss. If set, the indexer loss will
+                        be computed using the top-k indices.
+  --linear-attention-freq LINEAR_ATTENTION_FREQ
+                        Frequency between LA (linear attention) layers and
+                        SDPA (scaled dot-product attention) layers. Accepts
+                        either: - An integer N: Represents a (N-1):N ratio,
+                        meaning (N-1) LA layers for every 1 SDPA layer - A
+                        string containing a Python list expression that
+                        defines a custom pattern, e.g.: "([1]*3+[0]*1)*3"
+                        evaluates to [1,1,1,0,1,1,1,0,1,1,1,0] where 1
+                        indicates an LA layer and 0 indicates a SDPA layer.
+                        Examples: "([0]+[1]*23)": 1 SDPA layer followed by 23
+                        LA layers, "([1]*3+[0]*2)*2": Three LA layers followed
+                        by two SDPA layers, repeated twice.
+  --linear-conv-kernel-dim LINEAR_CONV_KERNEL_DIM
+                        Conv kernel dimension for the gated delta net.
+  --linear-key-head-dim LINEAR_KEY_HEAD_DIM
+                        Query and key head dimension for the gated delta net.
+  --linear-value-head-dim LINEAR_VALUE_HEAD_DIM
+                        Value and gate head dimension for the gated delta net.
+  --linear-num-key-heads LINEAR_NUM_KEY_HEADS
+                        Number of query and key heads for the gated delta net.
+  --linear-num-value-heads LINEAR_NUM_VALUE_HEADS
+                        Number of value and gate heads for the gated delta
+                        net.
 
 heterogeneous architecture:
   --heterogeneous-layers-config-path HETEROGENEOUS_LAYERS_CONFIG_PATH
@@ -1735,8 +2273,16 @@ logging:
                         Enable memory logging to tensorboard.
   --log-world-size-to-tensorboard
                         Enable world size logging to tensorboard.
+  --log-max-attention-logit
+                        Enable max attention logit logging to tensorboard.
   --wandb-project WANDB_PROJECT
                         The wandb project name. Ignore wandb by default.
+  --wandb-entity WANDB_ENTITY
+                        The wandb entity name. It is useful when there are
+                        multiple sub-projects in a project.
+                        https://community.wandb.ai/t/how-do-i-decide-which-
+                        account-private-or-team-to-upload-the-run-to/5704
+                        Ignore wandb by default.
   --wandb-exp-name WANDB_EXP_NAME
                         The wandb experiment name.
   --wandb-save-dir WANDB_SAVE_DIR
@@ -1779,52 +2325,84 @@ inference:
                         Select either Megatron or Huggingface as the Bert
                         embedder.
   --flash-decode        Whether to use the flash decoding kernel.
-  --enable-cuda-graph   Use CUDA graph capture and replay. --cuda-graph-
-                        scope="full_iteration" enables whole iteration CUDA
-                        graph.
+  --enable-cuda-graph   Deprecated. Use --cuda-graph-impl=local instead. Use
+                        local implementation of CUDA graph capture and replay.
+                        --cuda-graph-scope="full_iteration" enables whole
+                        iteration CUDA graph.
   --cuda-graph-warmup-steps CUDA_GRAPH_WARMUP_STEPS
                         Number of CUDA graph warmup steps
   --external-cuda-graph
-                        Use CUDA graph capture and replay. The CUDA graphs
-                        aremanually captured in the training script.
-  --cuda-graph-scope {full,attn,full_iteration}
-                        Determines the CUDA graphs capturing scope. Valid
-                        values are "full", "attn" and "full_iteration". "Full"
-                        scope captures a whole Transformer layer. "Attn" scope
-                        only captures operations in
-                        TransformerLayer._forward_attention(). "ful_iteration"
-                        scope captures a whole iteration.
+                        Deprecated. Use --cuda-graph-impl=transformer_engine
+                        instead. Use TE make_graphed_callables() to capture
+                        the CUDA graph. Use --cuda-graph-scope="attn", "mlp",
+                        "moe", "moe_router", "moe_preprocess", "mamba" for
+                        partial capture.
+  --cuda-graph-impl {none,local,transformer_engine}
+                        Determines the CUDA graph capture implementation.
+                        "none": no CUDA graph. "local": capture the CUDA graph
+                        using MCore local implementation. --cuda-graph-
+                        scope="full_iteration" enables whole iteration CUDA
+                        graph. "transformer_engine": capture the CUDA graph
+                        using TE make_graphed_callables().
+  --cuda-graph-scope CUDA_GRAPH_SCOPE [CUDA_GRAPH_SCOPE ...]
+                        Determines the CUDA graphs capturing scope. choices:
+                        "attn", "mlp", "moe", "moe_router", "moe_preprocess",
+                        "mamba", "full_iteration". "attn": captures operations
+                        in TransformerLayer._forward_attention(). "mlp":
+                        captures operations in TransformerLayer._forward_mlp()
+                        for a dense layer. "moe": captures operations in
+                        TransformerLayer._forward_mlp() for a MoE layer.
+                        "moe_router": captures operations in
+                        TransformerLayer._forward_mlp() up to
+                        MoELayer.router(), including the shared experts if
+                        they are not overlapped with EP comm.
+                        "moe_preprocess": captures operations in
+                        MoELayer.preprocess(). Must be used together with
+                        "moe_router". "mamba": captures the mamba layer.
+                        "full_iteration": captures a whole iteration.
+                        full_iteration scope is only supported with --cuda-
+                        graph-impl=local, other scopes are only supported with
+                        --cuda-graph-impl=transformer_engine. If not
+                        specified, the default scope is to capture the whole
+                        Transformer layer. For backward compatibility, we
+                        still allow passing "full" to specify capturing the
+                        whole layer, and convert it to an empty list.
+  --use-legacy-static-engine
+                        Use legacy static engine. (Current static engine uses
+                        dynamic engine under the hood)
   --inference-max-requests INFERENCE_MAX_BATCH_SIZE
                         Maximum number of requests for inference.
   --inference-max-seq-length INFERENCE_MAX_SEQ_LENGTH
                         Maximum sequence length expected for inference
                         (prefill + decode).
+  --inference-max-batch-size INFERENCE_MAX_BATCH_SIZE
+                        Maximum batch size for inference.
   --inference-dynamic-batching
                         Enable dynamic batching mode.
   --inference-dynamic-batching-buffer-size-gb INFERENCE_DYNAMIC_BATCHING_BUFFER_SIZE_GB
-                        Total buffer size (GB) allocated for the chunked KV
-                        memory.
-  --inference-dynamic-batching-chunk-size INFERENCE_DYNAMIC_BATCHING_CHUNK_SIZE
-                        KV cache chunk size. It should be a multiple of 256
-  --inference-dynamic-batching-buffer-guaranteed-fraction INFERENCE_DYNAMIC_BATCHING_BUFFER_GUARANTEED_FRACTION
-                        Space is reserved within the inference context memory
-                        buffer to guarantee that a minimum number of active
-                        requests will always be able to run to completion.
-                        This is to avoid the context being blocked by paused
-                        requests.
-  --inference-dynamic-batching-buffer-overflow-factor INFERENCE_DYNAMIC_BATCHING_BUFFER_OVERFLOW_FACTOR
-                        Scaling factor over the memory buffer size for auto
-                        computing `max_requests` and `max_tokens`. This
-                        scaling factor is used for fitting more requests and
-                        tokens in the memory buffer than it can safely hold,
-                        which in turn increases throughput.
-  --inference-dynamic-batching-max-requests-override INFERENCE_DYNAMIC_BATCHING_MAX_REQUESTS_OVERRIDE
-                        If set, this overrides the max requests as computed
-                        from `--inference-dynamic-batching-buffer-overflow-
-                        factor`.
-  --inference-dynamic-batching-max-tokens-override INFERENCE_DYNAMIC_BATCHING_MAX_TOKENS_OVERRIDE
-                        If set, this overrides the max tokens as computed from
-                        `--inference-dynamic-batching-buffer-overflow-factor`.
+                        Amount of on-GPU memory allocated for the KV cache.
+                        The total amount of memory allocated for the KV cache
+                        (CPU + GPU memory) depends on the value set for the
+                        unified virtual memory (UVM) level (via `--inference-
+                        dynamic-batching-unified-memory-level`).If the UVM
+                        level is 0, then only GPU memory is used and the total
+                        memory equals `buffer_size_gb`. If the UVM level is 1,
+                        then additional memory is utilized on the CPU and the
+                        total memory equals `buffer_size_gb +
+                        paused_buffer_size_gb`.
+  --inference-dynamic-batching-paused-buffer-size-gb INFERENCE_DYNAMIC_BATCHING_PAUSED_BUFFER_SIZE_GB
+                        Amount of memory reserved for paused requests in the
+                        dynamic inference context. Active requests are paused
+                        when there are not enough active blocks available to
+                        continue generating a request.
+  --inference-dynamic-batching-block-size INFERENCE_DYNAMIC_BATCHING_BLOCK_SIZE
+                        KV cache block size. It should be a multiple of 256
+  --inference-dynamic-batching-max-requests INFERENCE_DYNAMIC_BATCHING_MAX_REQUESTS
+                        Override the inference context's `max_requests`. By
+                        default, `max_requests` is set to the number of blocks
+                        in the context's memory buffer.
+  --inference-dynamic-batching-max-tokens INFERENCE_DYNAMIC_BATCHING_MAX_TOKENS
+                        Override the inference context's default `max_tokens`.
   --inference-dynamic-batching-num-cuda-graphs INFERENCE_DYNAMIC_BATCHING_NUM_CUDA_GRAPHS
                         Maximum number of cuda graphs to capture, where the
                         cuda graph batch sizes range from 1 to `max_requests`.
@@ -1832,6 +2410,19 @@ inference:
                         `max_requests` is computed). Due to rounding, the
                         actual number of cuda graphs may not equal this
                         argument.
+  --inference-dynamic-batching-track-paused-request-events
+                        Track paused request ids by adding 'paused' events to
+                        each request's event history. This has a very minor
+                        impact on latency.
+  --decode-only-cuda-graphs
+                        Only use cuda graphs for decode-only steps, not
+                        prefill and mixed steps.
+  --inference-dynamic-batching-unified-memory-level {0,1}
+                        Set unified memory usage within the dynamic inference
+                        context. The levels are: 0) no unified memory, 1)
+                        allocate `memory_buffer` in unified memory.
+                        Eventually, additional levels will be included to
+                        control other tensors within the context.
   --symmetric-ar-type {two_shot,one_shot,multimem_all_reduce,None}
                         What type of symmetric all reduce to use. The default
                         is none which is no use of symetric memory
@@ -1843,14 +2434,38 @@ inference:
   --mlp-chunks-for-prefill MLP_CHUNKS_FOR_PREFILL
                         Number of chunks along sequence dimension for MLP
                         computation during prefill
+  --disable-chunked-prefill
+                        Disable chunked prefill (chunked prefill is enabled by
+                        default).
+  --inference-dynamic-batching-cuda-graph-max-tokens INFERENCE_DYNAMIC_BATCHING_CUDA_GRAPH_MAX_TOKENS
+                        Maximum number of tokens to capture in a cuda graph.
+  --inference-dynamic-batching-cuda-graph-mixed-prefill-count INFERENCE_DYNAMIC_BATCHING_CUDA_GRAPH_MIXED_PREFILL_COUNT
+                        Number of mixed prefill requests to capture in a cuda
+                        graph.
+  --inference-logging-step-interval INFERENCE_LOGGING_STEP_INTERVAL
+                        Step interval for logging inference metrics. Default
+                        to 0 to disable inference logging.
+  --inference-wandb-logging, --no-inference-wandb-logging
+                        Enable inference wandb logging.
+  --inference-coordinator-port INFERENCE_COORDINATOR_PORT
+                        This port will be used to setup the inference
+                        coordinator on node-0
+  --inference-fuse-tp-communication
+                        Use the fused communication kernel for tensor
+                        parallelism during inference. This kernel fuses
+                        reduce-scatter + residual-add + rms-norm + all-gather
+                        into one operation.
 
 Transformer-Engine:
   --fp8-format {e4m3,hybrid}
                         Which fp8 format scheme to use for FP8 tensors in the
                         forward and backward pass
-  --fp8-recipe {tensorwise,delayed,mxfp8,blockwise}
+  --fp8-recipe {tensorwise,delayed,mxfp8,blockwise,custom}
                         Which fp8 recipe to use for FP8 tensors in the forward
                         and backward pass
+  --fp8-quantizer-factory FP8_QUANTIZER_FACTORY
+                        Python import path to a callable quantizer factory,
+                        e.g., package.module.quantizer_factory.
   --fp8-margin FP8_MARGIN
                         Scaling margin for fp8
   --fp8-interval FP8_INTERVAL
@@ -1862,7 +2477,7 @@ Transformer-Engine:
   --fp8-amax-compute-algo {most_recent,max}
                         Algorithm for computing amax from history
   --no-fp8-wgrad        Execute wgrad in higher precision even for FP8 runs
-  --transformer-impl {local,transformer_engine}
+  --transformer-impl {local,transformer_engine,inference_optimized}
                         Which Transformer implementation to use.
   --fp8-param-gather    Keep the compute param in fp8 (do not use any other
                         intermediate dtype) and perform the param all-gather
@@ -1876,11 +2491,20 @@ Transformer-Engine:
   --num-layers-at-end-in-bf16 NUM_LAYERS_AT_END_IN_BF16
                         Number of layers at end to construct in bf16 when
                         --first-last-layers-bf16 is enabled.
-  --te-rng-tracker      Use the Transformer Engine version of the random
-                        number generator. Required for CUDA graphs support.
-  --inference-rng-tracker
-                        Use a random number generator configured for
-                        inference.
+  --fp4-format {e2m1}   Which nvfp4 format scheme to use for FP4 tensors in
+                        the forward and backward pass
+  --fp4-recipe {nvfp4,custom}
+                        Which fp4 recipe to use for FP4 tensors in the forward
+                        and backward pass
+  --fp4-quantizer-factory FP4_QUANTIZER_FACTORY
+                        Python import path to a callable quantizer factory,
+                        e.g., package.module.quantizer_factory.
+  --fp4-param-gather    Keep the compute param in fp4 (do not use any other
+                        intermediate dtype) and perform the param all-gather
+                        in fp4.
+  --te-precision-config-file TE_PRECISION_CONFIG_FILE
+                        Configuration file to select per-module precision
+                        overrides. See TransformerEngineMixedPrecision.md
 
 retro:
   --retro-project-dir RETRO_PROJECT_DIR
@@ -2052,6 +2676,9 @@ config logger:
                         If set, will dump all configs to --config-logger-dir
 
 rerun engine:
+  Configuration for the rerun state machine used for result validation or
+  stats.
+
   --error-injection-rate ERROR_INJECTION_RATE
                         Rate at which to inject unexpected results, e.g. 1000
                         means once every 1000 result validations
@@ -2061,6 +2688,8 @@ rerun engine:
                         Use re-run engine to validate results (default) or to
                         emit stats on variability of computations due to non-
                         deterministic algorithms.
+  --check-for-spiky-loss
+                        Check for spiky loss.
 
 msc:
   --disable-msc         Disable the usage of Multi-Storage Client (MSC) in
@@ -2071,8 +2700,15 @@ kitchen:
                         Use the config .yaml file at the specified location to
                         configure kitchen quantization.
   --kitchen-recipe-number KITCHEN_RECIPE_NUMBER
-                        Use a default kitchen recipe for all layers as defined
-                        by QAT_PARAMS index
+                        Use a default kitchen recipe for all linear layers as
+                        defined by QAT_PARAMS index. The argument has no
+                        effect on attention layers.
+  --use-kitchen-attention
+                        Have kitchen use its own attention with attention
+                        quantization recipe support.
+  --kitchen-attention-backend {fa,sdpa}
+                        The backend to use for kitchen attention. The default
+                        is 'fa'.
 
 sft:
   --sft                 Megatron SFT training

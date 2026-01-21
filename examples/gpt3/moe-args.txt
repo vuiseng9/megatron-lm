@@ -31,7 +31,6 @@ obsolete
   --moe-use-legacy-grouped-gemm
 
 need compilation
-  --moe-enable-deepep
   --moe-deepep-num-sms (need compilation?)
 
 ignore due to modelling
@@ -53,5 +52,7 @@ ignore due to modelling
   --moe-apply-probs-on-input (really wonder why this exists in the first place)
 
 
+  --moe-enable-deepep (deprecated)
+  
 opens:
 - need to test if we turn on aux loss, --force lb still work? if yes, set aux loss to align as close to reality

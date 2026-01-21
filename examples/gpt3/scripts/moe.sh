@@ -68,7 +68,7 @@ MOE_ARGS=(
     --expert-model-parallel-size $EP
     --moe-token-dispatcher-type flex
     --moe-permute-fusion
-    --moe-enable-deepep
+    --moe-flex-dispatcher-backend deepep
     --moe-router-dtype fp32
 )
 
