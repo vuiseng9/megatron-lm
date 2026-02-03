@@ -3,6 +3,7 @@
 """Pretrain and SFT GPT."""
 
 # Capture the true program start time BEFORE any heavy imports
+import os
 import time
 _PROGRAM_START_TIME = time.time()
 
@@ -318,6 +319,14 @@ def get_embedding_ranks(pp_ranks: List[int]):
 
 
 if __name__ == "__main__":
+    DBG_ATTACH = False
+    if DBG_ATTACH and int(os.environ.get("RANK", "0")) == 0:
+        import debugpy
+        debugpy.listen(("127.0.0.1", 5678))
+        # optional (only when you want to pause immediately):
+        print('Waiting for debugger attach...', flush=True)
+        debugpy.wait_for_client()
+        
     # Timestamp right after entering __main__ block (after all imports/library setup)
     _MAIN_ENTRY_TIME = time.time()
 

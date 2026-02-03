@@ -2767,7 +2767,7 @@ def _add_distributed_args(parser):
     group.add_argument('--distributed-backend', default='nccl',
                        choices=['nccl', 'gloo'],
                        help='Which backend to use for distributed training.')
-    group.add_argument('--distributed-timeout-minutes', type=int, default=10,
+    group.add_argument('--distributed-timeout-minutes', type=int, default=120,
                        help='Default timeout minutes for torch.distributed.')
     group.add_argument('--distributed-timeout-seconds-after-init', type=int, default=None,
                        help='Timeout seconds for process groups after initialization.'
@@ -3366,7 +3366,7 @@ def _add_moe_args(parser):
                        help='Enable per-layer logging for MoE, currently supports auxiliary loss and z loss.')
     # Token dispatcher arguments
     group.add_argument('--moe-token-dispatcher-type', type=str,
-                       choices=['allgather', 'alltoall', 'flex'],
+                       choices=['allgather', 'alltoall', 'flex', 'fusco'],
                        default='allgather',
                        help="The type of token dispatcher to use. The default is 'allgather'. Options are 'allgather', 'alltoall'. We recommend using 'alltoall' when applying expert parallelism. For more information, please refer to the documentation in core/moe/README.")
     group.add_argument('--moe-enable-deepep', action='store_true',

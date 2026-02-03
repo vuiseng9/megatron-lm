@@ -26,6 +26,8 @@ from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import internal_api
 
+from megatron.core.transformer.moe.fusco_dispatcher import MoEFuscoTokenDispatcher
+
 try:
     import transformer_engine as te  # pylint: disable=unused-import
 
@@ -81,7 +83,7 @@ class BaseMoELayer(MegatronModule, ABC):
         self.router: TopKRouter = None
         self.experts = None
         self.shared_experts = None
-        self.token_dispatcher: Optional[MoETokenDispatcher] = None
+        self.token_dispatcher: Optional[MoEFlexTokenDispatcher] = None
         self.layer_number = layer_number
 
     @abstractmethod
@@ -180,6 +182,13 @@ class MoELayer(BaseMoELayer):
                 config=self.config,
                 pg_collection=pg_collection,
             )
+        elif config.moe_token_dispatcher_type == "fusco":
+            self.token_dispatcher = MoEFuscoTokenDispatcher(
+                self.num_local_experts,
+                self.local_expert_indices,
+                config=self.config,
+                pg_collection=pg_collection,
+            )    
         else:
             raise ValueError(
                 f"Unsupported token dispatcher type: {config.moe_token_dispatcher_type}"

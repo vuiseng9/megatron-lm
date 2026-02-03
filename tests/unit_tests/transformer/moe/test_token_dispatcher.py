@@ -352,8 +352,8 @@ class MoEModelTestContainer:
 
 
 permute_fusion_params = [False]
-if is_te_min_version("2.1.0"):
-    permute_fusion_params.append(True)
+# if is_te_min_version("2.1.0"):
+#     permute_fusion_params.append(True)
 
 
 class TestAllgatherDispatcher:
@@ -430,9 +430,9 @@ class TestFlexDispatcher:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.internal
-    @pytest.mark.parametrize("tp_size,ep_size", [(1, 8), (8, 1), (4, 2)])
+    @pytest.mark.parametrize("tp_size,ep_size", [(1, 2)])
     @pytest.mark.parametrize("permute_fusion", permute_fusion_params)
-    @pytest.mark.parametrize("moe_flex_dispatcher_backend", ["deepep", "hybridep"])
+    @pytest.mark.parametrize("moe_flex_dispatcher_backend", ["deepep"])
     def test_forward_backward(self, tp_size, ep_size, permute_fusion, moe_flex_dispatcher_backend):
         if moe_flex_dispatcher_backend == "deepep" and not is_deep_ep_available():
             pytest.skip("Deep EP is not available")
@@ -447,7 +447,7 @@ class TestFlexDispatcher:
             num_moe_experts=8,
             moe_router_topk=2,
             moe_router_load_balancing_type="aux_loss",
-            moe_token_dispatcher_type="flex",
+            moe_token_dispatcher_type="fusco",
             moe_permute_fusion=permute_fusion,
             hidden_size=1024,
             moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,

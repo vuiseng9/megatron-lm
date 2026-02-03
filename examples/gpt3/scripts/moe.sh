@@ -5,7 +5,7 @@ GBS=${1:-32}
 MBS=${2:-4}
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
-EP=8
+EP=2
 TP=1
 SP=0
 GPUS_PER_NODE=$EP
@@ -52,7 +52,7 @@ DISTRIBUTED_ARGS=(
 GPT_MODEL_ARGS=(
     --hidden-size 1024
     --num-attention-heads 16
-    --num-layers 16 
+    --num-layers 1 
     --seq-length 2048
     --max-position-embeddings 2048
     --attention-backend auto # Can use (flash/fused/unfused/local)
@@ -60,13 +60,13 @@ GPT_MODEL_ARGS=(
 
 MOE_ARGS=(
     --disable-bias-linear
-    --num-experts 64
-    --moe-router-topk 8
+    --num-experts 32
+    --moe-router-topk 4
     --moe-ffn-hidden-size 1024
     --moe-grouped-gemm
     --moe-router-force-load-balancing
     --expert-model-parallel-size $EP
-    --moe-token-dispatcher-type flex
+    --moe-token-dispatcher-type fusco
     --moe-permute-fusion
     --moe-flex-dispatcher-backend deepep
     --moe-router-dtype fp32
@@ -114,7 +114,7 @@ EVAL_AND_LOGGING_ARGS=(
     --tensorboard-dir $TENSORBOARD_LOGS_PATH 
 )
 
-cmd="torchrun ${DISTRIBUTED_ARGS[@]} $MLMROOT/pretrain_gpt.py \
+cmd="TORCHDYNAMO_VERBOSE=1 torchrun ${DISTRIBUTED_ARGS[@]} $MLMROOT/pretrain_gpt.py \
     ${GPT_MODEL_ARGS[@]} \
     ${MOE_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
