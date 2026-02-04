@@ -319,7 +319,7 @@ def get_embedding_ranks(pp_ranks: List[int]):
 
 
 if __name__ == "__main__":
-    DBG_ATTACH = False
+    DBG_ATTACH = False  # Set to True to enable debugger attach
     if DBG_ATTACH and int(os.environ.get("RANK", "0")) == 0:
         import debugpy
         debugpy.listen(("127.0.0.1", 5678))

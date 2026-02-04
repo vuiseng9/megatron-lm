@@ -430,7 +430,7 @@ class TestFlexDispatcher:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
     @pytest.mark.internal
-    @pytest.mark.parametrize("tp_size,ep_size", [(1, 2)])
+    @pytest.mark.parametrize("tp_size,ep_size", [(4, 2)])
     @pytest.mark.parametrize("permute_fusion", permute_fusion_params)
     @pytest.mark.parametrize("moe_flex_dispatcher_backend", ["deepep"])
     def test_forward_backward(self, tp_size, ep_size, permute_fusion, moe_flex_dispatcher_backend):

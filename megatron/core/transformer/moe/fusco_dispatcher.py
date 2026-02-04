@@ -68,14 +68,17 @@ class MoEFuscoTokenDispatcher(MoETokenDispatcher):
 
         self.num_local_experts = num_local_experts
         self.local_expert_indices = local_expert_indices
-        self.num_experts = config.num_moe_experts
-        self.topk = config.moe_router_topk
+        # similar to DeepEP, we flatten the TP and EP dimensions for Fusco dispatcher
+        # and hence we need to duplicate topk and num_experts accordingly
+        self.num_experts = config.num_moe_experts * self.tp_size
+        self.topk = config.moe_router_topk * self.tp_size
         assert self.tp_size * self.ep_size > 1, "Flex token dispatcher requires TPxEP > 1"
 
         global GLOBAL_FUSCO
         if GLOBAL_FUSCO is None:
+            self.fusco_pg = self.tp_ep_group if self.tp_size > 1 else self.ep_group
             GLOBAL_FUSCO = FUSCO(
-                group_ranks=[dist.get_process_group_ranks(pg_collection.ep)],
+                group_ranks=[dist.get_process_group_ranks(self.fusco_pg)],
                 library_path="/workspace/fusco-ep/lib/libfusco.so",
             )
         self.fusco = GLOBAL_FUSCO
@@ -85,6 +88,18 @@ class MoEFuscoTokenDispatcher(MoETokenDispatcher):
         # routing_map and probs are output of moe router shape of T, E
         self.hidden_shape = tokens.shape  # Save original shape for restoring later
         
+        if self.tp_size > 1:
+            # Expand probs to cover TP×EP world
+            num_tokens = routing_map.shape[0]
+            probs = (
+                probs.reshape(num_tokens, self.ep_size, 1, self.num_local_experts)
+                        .expand(-1, -1, self.tp_size, -1)
+                            .reshape(num_tokens, self.num_experts)
+                            # .reshape(num_tokens, self.ep_size * self.tp_size, self.num_local_experts)
+                ).contiguous()
+        
+        # TODO: handle capacity factor like DeepEP manager, now it is dropless regardless
+
         k_probs, k_indices = torch.topk(probs, self.topk, dim=-1, largest=True, sorted=False)
         k_indices = k_indices.to(torch.int64)
 
@@ -95,7 +110,7 @@ class MoEFuscoTokenDispatcher(MoETokenDispatcher):
         num_local_tokens_per_expert = torch.bincount(k_indices.view(-1), minlength=self.num_experts)
 
         num_local_tokens_per_rank = num_local_tokens_per_expert.view(
-            self.ep_size, self.num_local_experts
+            self.ep_size * self.tp_size, self.num_local_experts
         ).sum(dim=1)
 
         topk = k_indices.size(1)
@@ -106,15 +121,16 @@ class MoEFuscoTokenDispatcher(MoETokenDispatcher):
         self.send_splits = num_local_tokens_per_rank.to(torch.device("cpu"))
 
         num_global_tokens_per_expert = gather_along_first_dim(
-            num_local_tokens_per_expert, self.ep_group
-        ).reshape(self.ep_size, self.num_experts)
+            num_local_tokens_per_expert, self.fusco_pg
+        ).reshape(self.ep_size * self.tp_size, self.num_experts)
 
         num_global_tokens_per_local_expert = num_global_tokens_per_expert[
             :, self.local_expert_indices[0] : self.local_expert_indices[-1] + 1
         ].contiguous()
 
         num_tokens_per_local_expert = num_global_tokens_per_local_expert.sum(dim=0)
-
+        
+        # TODO: consider rename, it is not per ep when tp_size > 1
         num_tokens_per_ep = num_global_tokens_per_local_expert.sum(dim=1)
 
         self.num_ep_tokens = num_global_tokens_per_local_expert.sum()
@@ -229,6 +245,13 @@ class _FuscoAllToAll(torch.autograd.Function):
         # Create output tensor
         output = input.new_empty(output_shape, dtype=input.dtype, device=input.device)
         
+        # Get current stream for the NCCL operation
+        current_stream = torch.cuda.current_stream()
+        
+        # CRITICAL: Synchronize before NCCL call to ensure input data is ready
+        # This prevents race conditions where NCCL reads input before prior kernels finish writing
+        current_stream.synchronize()
+        
         # Perform FUSCO all_to_all
         fusco.all_to_all(
             output=output,
@@ -237,8 +260,12 @@ class _FuscoAllToAll(torch.autograd.Function):
             sendindices=sendindices,
             recv_splits=recv_splits,
             send_splits=send_splits,
-            stream=torch.cuda.current_stream(),
+            stream=current_stream,
         )
+        
+        # CRITICAL: Synchronize after NCCL call - NCCL operations are asynchronous!
+        # Without this, subsequent operations may read output before NCCL finishes writing
+        current_stream.synchronize()
         
         return output
     
@@ -252,6 +279,11 @@ class _FuscoAllToAll(torch.autograd.Function):
             input_shape, dtype=grad_output.dtype, device=grad_output.device
         )
         
+        current_stream = torch.cuda.current_stream()
+        
+        # CRITICAL: Synchronize before NCCL call
+        current_stream.synchronize()
+        
         # Backward is the reverse of recv-send indices and splits
         fusco.all_to_all(
             output=grad_input,
@@ -260,7 +292,10 @@ class _FuscoAllToAll(torch.autograd.Function):
             sendindices=ctx.recvindices,
             recv_splits=ctx.send_splits,
             send_splits=ctx.recv_splits,  
-            stream=torch.cuda.current_stream(),
+            stream=current_stream,
         )
+        
+        # CRITICAL: Synchronize after NCCL call
+        current_stream.synchronize()
         
         return None, grad_input, None, None, None, None, None

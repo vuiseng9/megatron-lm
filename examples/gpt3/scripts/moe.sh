@@ -5,10 +5,10 @@ GBS=${1:-32}
 MBS=${2:-4}
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
-EP=2
+EP=4
 TP=1
-SP=0
-GPUS_PER_NODE=$EP
+SP=1
+GPUS_PER_NODE=$(($EP*$TP))
 # Change for multinode config
 MASTER_ADDR=localhost
 MASTER_PORT=6000
@@ -114,7 +114,7 @@ EVAL_AND_LOGGING_ARGS=(
     --tensorboard-dir $TENSORBOARD_LOGS_PATH 
 )
 
-cmd="TORCHDYNAMO_VERBOSE=1 torchrun ${DISTRIBUTED_ARGS[@]} $MLMROOT/pretrain_gpt.py \
+cmd="NCCL_DEBUG=INFO torchrun ${DISTRIBUTED_ARGS[@]} $MLMROOT/pretrain_gpt.py \
     ${GPT_MODEL_ARGS[@]} \
     ${MOE_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
