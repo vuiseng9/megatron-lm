@@ -386,6 +386,13 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
 
 if __name__ == "__main__":
+    DBG_ATTACH = False
+    if DBG_ATTACH and int(os.environ.get("RANK", "0")) == 0:
+        import debugpy
+        debugpy.listen(("127.0.0.1", 5678))
+        # optional (only when you want to pause immediately):
+        print('Waiting for debugger attach...', flush=True)
+        debugpy.wait_for_client()
 
     # Temporary for transition to core datasets
     train_valid_test_datasets_provider.is_distributed = True

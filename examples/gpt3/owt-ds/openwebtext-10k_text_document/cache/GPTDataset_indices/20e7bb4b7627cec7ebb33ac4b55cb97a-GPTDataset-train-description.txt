@@ -1,0 +1,30 @@
+{
+    "class": "GPTDataset",
+    "dataset_path": "./owt-ds/openwebtext-10k_text_document",
+    "num_samples": 100,
+    "index_split": "train",
+    "random_seed": 1234,
+    "sequence_length": 1024,
+    "split": "949,50,1",
+    "split_matrix": [
+        [
+            0,
+            0.949
+        ],
+        [
+            0.949,
+            0.999
+        ],
+        [
+            0.999,
+            1.0
+        ]
+    ],
+    "tokenizer": {
+        "class": "_GPT2BPETokenizer",
+        "tokenizer_path": [
+            "./owt-ds/gpt2-vocab.json",
+            "./owt-ds/gpt2-merges.txt"
+        ]
+    }
+}
