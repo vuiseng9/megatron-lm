@@ -36,7 +36,9 @@ from megatron.core.transformer.moe.shared_experts import SharedExpertMLP
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.moe.token_dispatcher import MoETokenDispatcher, _DispatchManager
 
-
+import torch.distributed as dist
+import torch.distributed._symmetric_memory as symm_mem
+from megatron.core.transformer.moe.symm_mem_dispatch import TokenDispatcher as SymmMemDispatchModule
 logger = logging.getLogger(__name__)
 
 
@@ -104,11 +106,29 @@ class _SymmMemManager(_DispatchManager):
             )
         set_deepep_num_sms(config.moe_deepep_num_sms)
 
+        # symm_mem.set_backend("NVSHMEM")
+        # dispatcher = SymmMemDispatchModule(
+        #                 group_name = self.group.group_name,
+        #                 align = 8,
+        #                 in_len,
+        #                 out_len,
+        #                 token_shape = config.hidden_size,
+        #                 num_ranks = dist.get_world_size(group),
+        #                 num_local_experts=num_local_experts,
+        #                 dtype = torch.bfloat16,
+        #                 device = torch.cuda.current_device(),
+        #             )
+
+
     def setup_metadata(self, routing_map: torch.Tensor, probs: torch.Tensor):
         num_tokens = routing_map.shape[0]
 
         routing_map = routing_map.reshape(num_tokens, self.num_experts)
         probs = probs.reshape(num_tokens, self.num_experts)
+
+        self.routing_map = routing_map
+        self.probs = probs
+
         # Convert the format of routing map from multihot to indices.
         self.token_probs, self.token_indices = torch.topk(probs, self.router_topk, dim=-1)
         # Mask the indices of dropped tokens with -1
@@ -378,10 +398,23 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         routing_map, probs = self._initialize_metadata(routing_map, probs)
 
         self._comm_manager.setup_metadata(routing_map, probs)
-        if self.config.moe_flex_dispatcher_backend == "deepep":
-            pass
-            # print(self._comm_manager.token_indices.shape, self._comm_manager.token_probs)
-        return hidden_states, self._comm_manager.token_probs
+        # return hidden_states, self._comm_manager.token_probs
+        assert self.config.moe_pad_expert_input_to_capacity is False, "expert_capacity unsupported yet for MoESymmMemTokenDispather"
+        (
+            permutated_local_input_tokens,
+            permuted_probs,
+            self.reversed_local_input_permutation_mapping,
+            _,
+            _,
+        ) = permute(
+            hidden_states,                            # non K-expanded
+            self._comm_manager.routing_map,
+            probs=self._comm_manager.probs,
+            num_out_tokens=self._comm_manager.routing_map.shape[0] * self.config.moe_router_topk,   # k-expanded #tokens
+            fused=self.config.moe_permute_fusion,
+            drop_and_pad=False,                    # False for now, else self.config.moe_pad_expert_input_to_capacity
+        )
+        return permutated_local_input_tokens, permuted_probs
 
     def token_dispatch(
         self,
