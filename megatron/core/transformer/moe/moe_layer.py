@@ -25,6 +25,8 @@ from megatron.core.transformer.moe.token_dispatcher import (
     MoEFlexTokenDispatcher,
     MoETokenDispatcher,
 )
+from megatron.core.transformer.moe.symm_mem_dispatcher import MoESymmMemTokenDispatcher
+
 from megatron.core.transformer.moe.token_dispatcher_inference import (
     InferenceCUDAGraphTokenDispatcher,
 )
@@ -289,6 +291,13 @@ class MoELayer(BaseMoELayer):
             )
         elif config.moe_token_dispatcher_type == "flex":
             self.token_dispatcher = MoEFlexTokenDispatcher(
+                self.num_local_experts,
+                self.local_expert_indices,
+                config=self.config,
+                pg_collection=pg_collection,
+            )
+        elif config.moe_token_dispatcher_type == "symm_mem":
+            self.token_dispatcher = MoESymmMemTokenDispatcher(
                 self.num_local_experts,
                 self.local_expert_indices,
                 config=self.config,
