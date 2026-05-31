@@ -38,8 +38,12 @@ from megatron.core.transformer.moe.token_dispatcher import MoETokenDispatcher, _
 
 import torch.distributed as dist
 import torch.distributed._symmetric_memory as symm_mem
-from megatron.core.transformer.moe.symm_mem_dispatch import TokenDispatcher as SymmMemDispatchModule
+from megatron.core.transformer.moe.symm_mem_dispatch import TokenDispatcher as SymmMemDispatcher
+from megatron.core.transformer.moe.symm_mem_combine import TokenCombiner as SymmMemCombiner
+
 logger = logging.getLogger(__name__)
+
+_symm_mem_backend_initialized = False
 
 
 class _SymmMemManager(_DispatchManager):
@@ -106,18 +110,18 @@ class _SymmMemManager(_DispatchManager):
             )
         set_deepep_num_sms(config.moe_deepep_num_sms)
 
-        # symm_mem.set_backend("NVSHMEM")
-        # dispatcher = SymmMemDispatchModule(
-        #                 group_name = self.group.group_name,
-        #                 align = 8,
-        #                 in_len,
-        #                 out_len,
-        #                 token_shape = config.hidden_size,
-        #                 num_ranks = dist.get_world_size(group),
-        #                 num_local_experts=num_local_experts,
-        #                 dtype = torch.bfloat16,
-        #                 device = torch.cuda.current_device(),
-        #             )
+        global _symm_mem_backend_initialized
+        if not _symm_mem_backend_initialized:
+            symm_mem.set_backend("NVSHMEM")
+            _symm_mem_backend_initialized = True
+        
+        _torch_ver = tuple(int(x) for x in torch.__version__.split("+")[0].split(".")[:2])
+        if _torch_ver <= (2, 11):
+            symm_mem.enable_symm_mem_for_group(dist.group.WORLD.group_name)
+
+        self.token_dispatcher = None
+        self.probs_dispatcher = None
+        self.token_combiner = None      
 
 
     def setup_metadata(self, routing_map: torch.Tensor, probs: torch.Tensor):
@@ -136,11 +140,49 @@ class _SymmMemManager(_DispatchManager):
             mask = self.token_probs == 0
             self.token_indices = self.token_indices.masked_fill(mask, -1)
 
+        if self.token_dispatcher is None:
+            # only construct/initialize during the first run as
+            # mbs only accessible during runtime 
+            # (not during model construction where this manager is instantiated)
+            H = self.config.hidden_size
+            L = self.config.seq_length
+            E = self.num_experts
+            K = self.config.moe_router_topk
+            EPR = self.num_local_experts
+            NRANK_EP = dist.get_world_size(self.group)
+            T = self.routing_map.shape[0]
+            ilen = T*K
+            olen = int(ilen * 1.25) # int(T*K * EPR * NRANK_EP// E)  # 
+
+            self.token_dispatcher = SymmMemDispatcher(
+                                        group = self.group,
+                                        align = 8,
+                                        in_len = ilen,
+                                        out_len = olen,
+                                        token_shape = (H,),
+                                        num_ranks = NRANK_EP,
+                                        num_local_experts = EPR,
+                                        dtype = torch.bfloat16,   # TODO: hardcoded for now, need to find a way to access hidden_states
+                                        device = torch.cuda.current_device(),
+                                    )
+            self.prob_dispatcher = SymmMemDispatcher(
+                            group = self.group,
+                            align = 8,
+                            in_len = ilen,
+                            out_len = olen,
+                            token_shape = (),
+                            num_ranks = NRANK_EP,
+                            num_local_experts = EPR,
+                            dtype = probs.dtype,
+                            device = torch.cuda.current_device(),
+                        )
+
     def dispatch(
         self,
         hidden_states: torch.Tensor,
-        async_finish: bool = False,
-        allocate_on_comm_stream: bool = False,
+        probs: torch.Tensor
+        # async_finish: bool = False,
+        # allocate_on_comm_stream: bool = False,
     ) -> torch.Tensor:
         # DeepEP only supports float32 probs
         if self.token_probs.dtype != torch.float32:
@@ -149,23 +191,26 @@ class _SymmMemManager(_DispatchManager):
                     "DeepEP only supports float32 probs, please set --moe-router-dtype=fp32"
                 )
             self.token_probs = self.token_probs.float()  # downcast or upcast
-        hidden_states, dispatched_indices, dispatched_probs, num_tokens_per_expert, handle = (
-            fused_dispatch(
-                hidden_states,
-                self.token_indices,
-                self.token_probs,
-                self.num_experts,
-                self.group,
-                async_finish=async_finish,
-                allocate_on_comm_stream=allocate_on_comm_stream,
-            )
-        )
-        self.handle = handle
-        self.tokens_per_expert = num_tokens_per_expert
-        self.dispatched_indices = dispatched_indices
-        self.dispatched_probs = dispatched_probs
-
-        return hidden_states
+        # hidden_states, dispatched_indices, dispatched_probs, num_tokens_per_expert, handle = (
+        #     fused_dispatch(
+        #         hidden_states,
+        #         self.token_indices,
+        #         self.token_probs,
+        #         self.num_experts,
+        #         self.group,
+        #         async_finish=async_finish,
+        #         allocate_on_comm_stream=allocate_on_comm_stream,
+        #     )
+        # )
+        # self.handle = handle
+        # self.tokens_per_expert = num_tokens_per_expert
+        # self.dispatched_indices = dispatched_indices
+        # self.dispatched_probs = dispatched_probs
+        insplits = self.routing_map.sum(dim=0)
+        dispatched_input = self.token_dispatcher(hidden_states, insplits)
+        dispatched_probs = self.prob_dispatcher(probs, insplits)
+        dist.barrier()
+        return dispatched_input, dispatched_probs
 
     def _indices_to_multihot(self, indices, probs):
         """
@@ -257,6 +302,7 @@ class _SymmMemManager(_DispatchManager):
                 self.dispatched_indices, self.dispatched_probs, self.num_local_experts
             )
         else:
+            dist.barrier
             self.dispatched_routing_map, self.dispatched_probs = self._indices_to_multihot(
                 self.dispatched_indices, self.dispatched_probs
             )
@@ -407,7 +453,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
             _,
             _,
         ) = permute(
-            hidden_states,                            # non K-expanded
+            hidden_states,                         # non K-expanded
             self._comm_manager.routing_map,
             probs=self._comm_manager.probs,
             num_out_tokens=self._comm_manager.routing_map.shape[0] * self.config.moe_router_topk,   # k-expanded #tokens
@@ -440,10 +486,8 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             A tuple of dispatched tokens and probabilities.
         """
-        return (
-            self._comm_manager.dispatch(hidden_states, async_finish, allocate_on_comm_stream),
-            self._comm_manager.dispatched_probs,
-        )
+        dist.barrier()
+        return self._comm_manager.dispatch(hidden_states, probs)
 
     def dispatch_postprocess(self, hidden_states: torch.Tensor, probs: torch.Tensor):
         """Converts dispatched tokens to a per-expert format for expert processing.
