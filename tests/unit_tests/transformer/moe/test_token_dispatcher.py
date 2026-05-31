@@ -541,7 +541,7 @@ class TestSymmMemDispatcher:
     @pytest.mark.internal
     @pytest.mark.parametrize("tp_size,ep_size", TP_EP_TUPLES)
     @pytest.mark.parametrize("permute_fusion", permute_fusion_params)
-    @pytest.mark.parametrize("moe_flex_dispatcher_backend", ["deepep"])
+    @pytest.mark.parametrize("moe_flex_dispatcher_backend", ["torch"])
     def test_forward_backward(self, tp_size, ep_size, permute_fusion, moe_flex_dispatcher_backend):
         if moe_flex_dispatcher_backend == "deepep" and not is_deep_ep_available():
             pytest.skip("Deep EP is not available")

@@ -305,7 +305,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         self.num_local_experts = num_local_experts
         self.local_expert_indices = local_expert_indices
         assert self.tp_size * self.ep_size > 1, "Flex token dispatcher requires TPxEP > 1"
-        if self.config.moe_flex_dispatcher_backend == "deepep":
+        if self.config.moe_flex_dispatcher_backend == "torch":
             self._comm_manager = _SymmMemManager(
                 group=self.tp_ep_group,
                 num_local_experts=self.num_local_experts,
@@ -317,8 +317,8 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         else:
             raise ValueError(
                 f"Invalid backend: {self.config.moe_flex_dispatcher_backend}"
-                "Please set --moe-flex-dispatcher-backend=deepep or "
-                "--moe-flex-dispatcher-backend=hybridep"
+                "Please set --moe-flex-dispatcher-backend=symm_mem or "
+                "--moe-flex-dispatcher-backend=torch"
             )
 
     def set_shared_experts(self, shared_experts):
