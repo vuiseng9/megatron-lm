@@ -87,7 +87,6 @@ class AllToAllVDev2dOffset(torch.autograd.Function):
         torch.ops.symm_mem.all_to_all_vdev_2d_offset(
             input, out, in_splits_offsets, out_splits_offsets, group_name
         )
-
         # Output splits in forward is the input splits in backward
         ctx.save_for_backward(
             out_splits_offsets, grad_out_buf, grad_in_buf, grad_in_splits_offsets
@@ -153,7 +152,7 @@ class TokenCombiner(torch.nn.Module):
 
     def __init__(
         self,
-        group_name: str,
+        group,
         align: int,
         in_len,
         out_len,
@@ -164,15 +163,28 @@ class TokenCombiner(torch.nn.Module):
         device: torch.device,
     ) -> None:
         super().__init__()
-        self.group_name = group_name
+        self.group = group
         self.align = align
+        self.nsplits = num_ranks * num_local_experts
+
+        self._inp = symm_mem.empty(in_len, *token_shape, dtype=dtype, device=device)
+        self._out = symm_mem.empty(out_len, *token_shape, dtype=dtype, device=device)
+        self._in_splits_offsets = symm_mem.empty((2, self.nsplits), dtype=torch.int64, device=device)
+        self._out_splits_offsets = symm_mem.empty((2, self.nsplits), dtype=torch.int64, device=device)
+
+        self.handles = {
+            "_inp": symm_mem.rendezvous(self._inp, group=group.group_name),
+            "_out": symm_mem.rendezvous(self._out, group=group.group_name),
+            "_in_splits_offsets": symm_mem.rendezvous(self._in_splits_offsets, group=group.group_name),
+            "_out_splits_offsets": symm_mem.rendezvous(self._out_splits_offsets, group=group.group_name),
+        }
+
         self.grad_out_buf = symm_mem.empty(
             out_len, *token_shape, dtype=dtype, device=device
         )
         self.grad_in_buf = symm_mem.empty(
             in_len, *token_shape, dtype=dtype, device=device
         )
-        self.nsplits = num_ranks * num_local_experts
         self.grad_in_splits_offsets = symm_mem.empty(
             (2, self.nsplits), dtype=torch.int64, device=device
         )
@@ -180,9 +192,9 @@ class TokenCombiner(torch.nn.Module):
     def forward(
         self,
         inp: torch.Tensor,
-        out: torch.Tensor,
         in_splits_offsets: torch.Tensor,
-        out_splits_offsets: torch.Tensor,
+        # out: torch.Tensor,
+        # out_splits_offsets: torch.Tensor,
     ) -> torch.Tensor:
         """
         Args:
@@ -205,17 +217,21 @@ class TokenCombiner(torch.nn.Module):
             raise ValueError(
                 f"Expected shape (2, {self.nsplits}), got {in_splits_offsets.shape}"
             )
-        if out_splits_offsets.shape != (2, self.nsplits):
-            raise ValueError(
-                f"Expected shape (2, {self.nsplits}), got {out_splits_offsets.shape}"
-            )
-
+        # if out_splits_offsets.shape != (2, self.nsplits):
+        #     raise ValueError(
+        #         f"Expected shape (2, {self.nsplits}), got {out_splits_offsets.shape}"
+        #     )
+        n = inp.shape[0]
+        self._inp[:n].copy_(inp)
+        self._in_splits_offsets.copy_(in_splits_offsets)
+        self._out.fill_(-1)
+        self._out_splits_offsets.fill_(-1)
         return AllToAllVDev2dOffset.apply(
-            inp,
-            out,
-            in_splits_offsets,
-            out_splits_offsets,
-            self.group_name,
+            self._inp,
+            self._out,
+            self._in_splits_offsets,
+            self._out_splits_offsets,
+            self.group.group_name,
             self.align,
             self.grad_out_buf,
             self.grad_in_buf,

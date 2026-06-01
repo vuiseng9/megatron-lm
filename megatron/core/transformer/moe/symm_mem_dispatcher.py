@@ -168,16 +168,27 @@ class _SymmMemManager(_DispatchManager):
                                         device = torch.cuda.current_device(),
                                     )
             self.prob_dispatcher = SymmMemDispatcher(
-                            group = self.group,
-                            align = 1,
-                            in_len = ilen,
-                            out_len = olen,
-                            token_shape = (),
-                            num_ranks = NRANK_EP,
-                            num_local_experts = EPR,
-                            dtype = probs.dtype,
-                            device = torch.cuda.current_device(),
-                        )
+                                        group = self.group,
+                                        align = 1,
+                                        in_len = ilen,
+                                        out_len = olen,
+                                        token_shape = (),
+                                        num_ranks = NRANK_EP,
+                                        num_local_experts = EPR,
+                                        dtype = probs.dtype,
+                                        device = torch.cuda.current_device(),
+                                    )
+            self.token_combiner = SymmMemCombiner(
+                                        group = self.group,
+                                        align = 1,
+                                        in_len = olen,
+                                        out_len = ilen,
+                                        token_shape = (H,),
+                                        num_ranks = NRANK_EP,
+                                        num_local_experts = EPR,
+                                        dtype = torch.bfloat16,   # TODO: hardcoded
+                                        device = torch.cuda.current_device(),
+                                    )
 
     def dispatch(
         self,
@@ -257,15 +268,16 @@ class _SymmMemManager(_DispatchManager):
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
     ) -> torch.Tensor:
-        hidden_states, _ = fused_combine(
-            hidden_states,
-            self.group,
-            self.handle,
-            async_finish=async_finish,
-            allocate_on_comm_stream=allocate_on_comm_stream,
-        )
-        # Release the handle after combine operation
-        self.handle = None
+        # hidden_states, _ = fused_combine(
+        #     hidden_states,
+        #     self.group,
+        #     self.handle,
+        #     async_finish=async_finish,
+        #     allocate_on_comm_stream=allocate_on_comm_stream,
+        # )
+        # # Release the handle after combine operation
+        # self.handle = None
+        hidden_states = self.token_combiner(hidden_states, self.token_dispatcher._out_splits_offsets)
         return hidden_states
 
     def _pad_routing_map(
@@ -503,8 +515,13 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             A tuple of permuted tokens, token counts per expert, and permuted probabilities.
         """
+        # _out_splits_offsets is written as a side-effect of all_to_all_vdev_2d (not returned),
+        # so PyTorch has no dependency edge to it. NVSHMEM remote puts from peer ranks land
+        # asynchronously; synchronize the stream here to ensure the A2A kernel (and its
+        # NVSHMEM quiet/barrier) has fully completed before we read _out_splits_offsets.
+        torch.cuda.current_stream().synchronize()
         tokens_per_expert = self._comm_manager.get_number_of_tokens_per_expert()
-        ntok = tokens_per_expert.sum().item() # TODO
+        ntok = tokens_per_expert.sum().item()
         global_input_tokens = hidden_states[:ntok] 
         permuted_probs = probs[:ntok]
         return global_input_tokens, tokens_per_expert, permuted_probs
@@ -515,8 +532,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         This method restores the hidden states to their original ordering before expert processing
         by using the communication manager's restoration function.
         """
-        dist.barrier()
-        hidden_states = self._comm_manager.get_restored_hidden_states_by_experts(hidden_states)
+        # hidden_states = self._comm_manager.get_restored_hidden_states_by_experts(hidden_states)
         return hidden_states
 
     def token_combine(
@@ -552,4 +568,16 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             The final MoE layer output reshaped to its original dimensions.
         """
+        torch.distributed.barrier()
+        # output = unpermute(
+        #     permutated_local_input_tokens,
+        #     self.reversed_local_input_permutation_mapping,
+        #     restore_shape=self.hidden_shape_before_permute,
+        #     routing_map=self.routing_map,
+        #     fused=self.config.moe_permute_fusion,
+        #     drop_and_pad=self.drop_and_pad,
+        # )
+
+        # # Reshape the output tensor
+        # output = output.view(self.hidden_shape)
         return hidden_states.view(self.hidden_shape)
