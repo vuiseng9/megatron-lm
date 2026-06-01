@@ -88,6 +88,8 @@ class _SymmMemManager(_DispatchManager):
             config (TransformerConfig): The configuration for the transformer model.
         """
         self.group = group
+        self.num_rank_group = dist.get_world_size(self.group)
+
         self.num_local_experts = num_local_experts
         self.config = config
 
@@ -149,14 +151,14 @@ class _SymmMemManager(_DispatchManager):
             E = self.num_experts
             K = self.config.moe_router_topk
             EPR = self.num_local_experts
-            NRANK_EP = dist.get_world_size(self.group)
+            NRANK_EP = self.num_rank_group
             T = self.routing_map.shape[0]
             ilen = T*K
             olen = int(ilen * 1.25) # int(T*K * EPR * NRANK_EP// E)  # 
 
             self.token_dispatcher = SymmMemDispatcher(
                                         group = self.group,
-                                        align = 8,
+                                        align = 1,
                                         in_len = ilen,
                                         out_len = olen,
                                         token_shape = (H,),
@@ -167,7 +169,7 @@ class _SymmMemManager(_DispatchManager):
                                     )
             self.prob_dispatcher = SymmMemDispatcher(
                             group = self.group,
-                            align = 8,
+                            align = 1,
                             in_len = ilen,
                             out_len = olen,
                             token_shape = (),
@@ -209,7 +211,6 @@ class _SymmMemManager(_DispatchManager):
         insplits = self.routing_map.sum(dim=0)
         dispatched_input = self.token_dispatcher(hidden_states, insplits)
         dispatched_probs = self.prob_dispatcher(probs, insplits)
-        dist.barrier()
         return dispatched_input, dispatched_probs
 
     def _indices_to_multihot(self, indices, probs):
@@ -246,7 +247,9 @@ class _SymmMemManager(_DispatchManager):
         """
         Get the number of tokens per expert.
         """
-        return self.tokens_per_expert
+        # l0_from_rank0, l0_from_rank1, ... l1_from_rank0, l1_from_rank1, 
+        return self.token_dispatcher._out_splits_offsets[0].view(self.num_local_experts, self.num_rank_group).sum(dim=1)
+         
 
     def combine(
         self,
@@ -302,7 +305,6 @@ class _SymmMemManager(_DispatchManager):
                 self.dispatched_indices, self.dispatched_probs, self.num_local_experts
             )
         else:
-            dist.barrier
             self.dispatched_routing_map, self.dispatched_probs = self._indices_to_multihot(
                 self.dispatched_indices, self.dispatched_probs
             )
@@ -486,7 +488,6 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             A tuple of dispatched tokens and probabilities.
         """
-        dist.barrier()
         return self._comm_manager.dispatch(hidden_states, probs)
 
     def dispatch_postprocess(self, hidden_states: torch.Tensor, probs: torch.Tensor):
@@ -502,10 +503,10 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             A tuple of permuted tokens, token counts per expert, and permuted probabilities.
         """
-        global_input_tokens, permuted_probs = (
-            self._comm_manager.get_permuted_hidden_states_by_experts(hidden_states)
-        )
         tokens_per_expert = self._comm_manager.get_number_of_tokens_per_expert()
+        ntok = tokens_per_expert.sum().item() # TODO
+        global_input_tokens = hidden_states[:ntok] 
+        permuted_probs = probs[:ntok]
         return global_input_tokens, tokens_per_expert, permuted_probs
 
     def combine_preprocess(self, hidden_states: torch.Tensor):
@@ -514,6 +515,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         This method restores the hidden states to their original ordering before expert processing
         by using the communication manager's restoration function.
         """
+        dist.barrier()
         hidden_states = self._comm_manager.get_restored_hidden_states_by_experts(hidden_states)
         return hidden_states
 

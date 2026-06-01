@@ -589,6 +589,7 @@ class MoELayer(BaseMoELayer):
                 assert (
                     mlp_bias is None
                 ), f"mlp_bias is not supported for {type(self.token_dispatcher)}"
+                torch.distributed.barrier()
                 output = self.combine(output)
 
                 if intermediate_tensors is not None:
