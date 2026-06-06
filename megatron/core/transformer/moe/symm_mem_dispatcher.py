@@ -46,6 +46,166 @@ logger = logging.getLogger(__name__)
 _symm_mem_backend_initialized = False
 
 
+class SymmMem2DA2A(torch.autograd.Function):
+    """Differentiable all_to_all_vdev_2d (the MoE *dispatch*).
+
+    forward : inp (rank-major, dense) -> out (expert-major, major_align-padded)
+    backward: grad_out (expert-major, padded) -> grad_inp (rank-major, dense),
+              realised with all_to_all_vdev_2d_offset (combine).
+
+    This is the mirror of SymmMem2DA2AOffset: dispatch and combine are adjoints of
+    each other, so dispatch's backward is exactly combine routed on the gradient.
+    The combine in backward is fed the *same* out_splits_offsets that dispatch
+    produced in forward, which is precisely the padded layout grad_out lives in.
+
+    Returns three tensors:
+        out                : [total_padded, H] expert-major, padded activations (differentiable)
+        out_splits_offsets : [2, E] int64 (row0 splits, row1 offsets)        (non-diff)
+        offs               : [n_local_experts] int32 grouped_mm group ends    (non-diff)
+    """
+
+    @staticmethod
+    def forward(ctx, inp, in_splits, group_name, major_align,
+                n_local_experts, max_in_numel, max_out_numel):
+        # inp        : [m, H] rank-major dense (packed by destination global expert)
+        # in_splits  : [E] int64 rank-major splits (index g = dst_rank*EPR + local_e)
+        device, H = inp.device, inp.shape[1]
+        E = in_splits.shape[0]
+        ws = E // n_local_experts
+
+        inp_symm = symm_mem.empty(max_in_numel, H, dtype=inp.dtype, device=device).zero_()
+        inp_symm[: inp.shape[0]].copy_(inp)
+        in_splits_symm = symm_mem.empty(E, dtype=torch.int64, device=device).copy_(in_splits)
+        out_symm = symm_mem.empty(max_out_numel, H, dtype=inp.dtype, device=device).zero_()
+        out_so = symm_mem.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
+
+        torch.cuda.synchronize(device)
+        dist.barrier()
+
+        torch.ops.symm_mem.all_to_all_vdev_2d(
+            inp_symm, out_symm, in_splits_symm, out_so, group_name, major_align=major_align
+        )
+
+        # Per-expert padded sizes -> grouped_mm group offsets; total_padded == used rows.
+        recv = out_so[0]                                  # [E] expert-major true splits
+        per_pad = torch.clamp(
+            (recv.view(n_local_experts, ws).sum(dim=1) + major_align - 1)
+            // major_align * major_align,
+            min=major_align,
+        )
+        offs = per_pad.cumsum(0).to(torch.int32)          # [n_local_experts]
+        total_padded = int(offs[-1].item())
+
+        ctx.group_name = group_name
+        ctx.max_in_numel = max_in_numel
+        ctx.max_out_numel = max_out_numel
+        ctx.in_shape = tuple(inp.shape)
+        ctx.save_for_backward(out_so.detach().clone())    # the padded layout grad_out lives in
+
+        return out_symm[:total_padded].clone(), out_so.detach().clone(), offs.detach().clone()
+
+    @staticmethod
+    def backward(ctx, grad_out, _grad_so, _grad_offs):
+        # grad_out : [total_padded, H] grad wrt the (expert-major, padded) output.
+        (out_so,) = ctx.saved_tensors
+        device, H = grad_out.device, grad_out.shape[1]
+        E = out_so.shape[1]
+
+        # backward == COMBINE(grad_out): expert-major padded -> rank-major dense.
+        g_symm = symm_mem.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device).zero_()
+        g_symm[: grad_out.shape[0]].copy_(grad_out)
+        in_so = symm_mem.empty((2, E), dtype=torch.int64, device=device).copy_(out_so)
+        grad_inp_symm = symm_mem.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device).zero_()
+        out_so_bwd = symm_mem.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
+
+        torch.cuda.synchronize(device)
+        dist.barrier()
+
+        torch.ops.symm_mem.all_to_all_vdev_2d_offset(
+            g_symm, grad_inp_symm, in_so, out_so_bwd, ctx.group_name
+        )
+
+        m = ctx.in_shape[0]
+        grad_inp = grad_inp_symm[:m].clone()
+        # grads for: inp, in_splits, group_name, major_align, n_local_experts, max_in_numel, max_out_numel
+        return grad_inp, None, None, None, None, None, None
+
+
+class SymmMem2DA2AOffset(torch.autograd.Function):
+    """Differentiable all_to_all_vdev_2d_offset (the MoE *combine*).
+
+    forward : inp (expert-major, major_align-padded) -> out (rank-major, dense)
+    backward: grad_out (rank-major, dense)            -> grad_inp (expert-major,
+              major_align-padded), realised with all_to_all_vdev_2d (dispatch).
+
+    Autograd-visible tensors (inp / grad_inp / out) are ordinary tensors and may
+    have rank-varying lengths; only the *internal* NVSHMEM comm buffers must be a
+    constant size across ranks, hence the explicit `max_in_numel` / `max_out_numel`.
+    """
+
+    @staticmethod
+    def forward(ctx, inp, in_splits_offsets, group_name, major_align,
+                max_in_numel, max_out_numel):
+        # inp                : [m, H]  data to combine (expert-major, padded). m may vary per rank.
+        # in_splits_offsets  : [2, E]  int64 -- row0 input splits, row1 input offsets (the padded layout)
+        device, H = inp.device, inp.shape[1]
+        E = in_splits_offsets.shape[1]
+
+        # Stage the differentiable inputs into constant-size symmetric buffers.
+        inp_symm = symm_mem.empty(max_in_numel, H, dtype=inp.dtype, device=device).zero_()
+        inp_symm[: inp.shape[0]].copy_(inp)
+        in_so = symm_mem.empty((2, E), dtype=torch.int64, device=device)
+        in_so.copy_(in_splits_offsets)
+        out_symm = symm_mem.empty(max_out_numel, H, dtype=inp.dtype, device=device).zero_()
+        out_so = symm_mem.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
+
+        torch.cuda.synchronize(device)
+        dist.barrier()
+
+        torch.ops.symm_mem.all_to_all_vdev_2d_offset(
+            inp_symm, out_symm, in_so, out_so, group_name
+        )
+        out_numel = int(out_so[0].sum().item())
+
+        # The rank-major splits the combine produced == the splits dispatch consumes
+        # as input on the way back. That + major_align reproduces `in_splits_offsets`.
+        ctx.group_name = group_name
+        ctx.major_align = major_align
+        ctx.max_in_numel = max_in_numel
+        ctx.max_out_numel = max_out_numel
+        ctx.in_shape = tuple(inp.shape)
+        ctx.save_for_backward(out_so[0].detach().clone())
+
+        return out_symm[:out_numel].clone(), out_so.detach().clone()
+
+    @staticmethod
+    def backward(ctx, grad_out, _grad_out_so):
+        # grad_out : [out_numel, H] grad wrt the (rank-major, dense) combine output.
+        (rank_major_splits,) = ctx.saved_tensors
+        device, H = grad_out.device, grad_out.shape[1]
+        E = rank_major_splits.shape[0]
+
+        # backward == DISPATCH(grad_out): rank-major dense -> expert-major padded.
+        g_symm = symm_mem.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device).zero_()
+        g_symm[: grad_out.shape[0]].copy_(grad_out)
+        in_splits = symm_mem.empty(E, dtype=torch.int64, device=device).copy_(rank_major_splits)
+        grad_inp_symm = symm_mem.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device).zero_()
+        bwd_so = symm_mem.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
+
+        torch.cuda.synchronize(device)
+        dist.barrier()
+
+        torch.ops.symm_mem.all_to_all_vdev_2d(
+            g_symm, grad_inp_symm, in_splits, bwd_so, ctx.group_name,
+            major_align=ctx.major_align,
+        )
+
+        m = ctx.in_shape[0]
+        grad_inp = grad_inp_symm[:m].clone()  # padding rows stay 0 -> 0 grad, as required
+        # grads for: inp, in_splits_offsets, group_name, major_align, max_in_numel, max_out_numel
+        return grad_inp, None, None, None, None, None
+
+
 class _SymmMemManager(_DispatchManager):
     """
     A manager class to handle fused all-to-all communication processes for MoE models using
@@ -71,6 +231,8 @@ class _SymmMemManager(_DispatchManager):
     def __init__(
         self,
         group: torch.distributed.ProcessGroup,
+        max_tokens_per_rank: int,
+        major_align: int,
         num_local_experts: int,
         router_topk: int,
         num_experts: int,
@@ -82,35 +244,31 @@ class _SymmMemManager(_DispatchManager):
         Args:
             group (torch.distributed.ProcessGroup): The process group to use for communication.
                 This should be the ETPxEP group.
+            max_tokens_per_rank (int): The maximum number of tokens per rank.
+            major_align (int): The alignment for major dimensions.
             num_local_experts (int): The number of local experts.
             router_topk (int): The number of experts for each token to select.
             num_experts (int): The total number of experts in the group.
             config (TransformerConfig): The configuration for the transformer model.
         """
         self.group = group
+        self.group_name = group.group_name
         self.num_rank_group = dist.get_world_size(self.group)
 
         self.num_local_experts = num_local_experts
         self.config = config
+
+        self.major_align = major_align
+        self.max_in = max_tokens_per_rank
+        self.max_out = (
+            2 * max_tokens_per_rank + (num_local_experts + 1) * major_align
+        )
 
         self.router_topk = router_topk
         self.num_experts = num_experts
         self.router_dtype = config.moe_router_dtype
         self.capacity_factor = config.moe_expert_capacity_factor
         self.permute_fusion = config.moe_permute_fusion
-
-        # Metadata
-        self.token_indices: Optional[torch.Tensor] = None
-        self.token_probs: Optional[torch.Tensor] = None
-        # Handle used for combine operation
-        self.handle = None
-
-        if fused_dispatch is None:
-            raise ImportError(
-                "DeepEP is not installed. Please install DeepEP package from "
-                "https://github.com/deepseek-ai/deepep."
-            )
-        set_deepep_num_sms(config.moe_deepep_num_sms)
 
         global _symm_mem_backend_initialized
         if not _symm_mem_backend_initialized:
@@ -121,108 +279,29 @@ class _SymmMemManager(_DispatchManager):
         if _torch_ver <= (2, 11):
             symm_mem.enable_symm_mem_for_group(dist.group.WORLD.group_name)
 
-        self.token_dispatcher = None
-        self.probs_dispatcher = None
-        self.token_combiner = None      
 
 
     def setup_metadata(self, routing_map: torch.Tensor, probs: torch.Tensor):
-        num_tokens = routing_map.shape[0]
-
-        routing_map = routing_map.reshape(num_tokens, self.num_experts)
-        probs = probs.reshape(num_tokens, self.num_experts)
-
-        self.routing_map = routing_map
-        self.probs = probs
-
-        # Convert the format of routing map from multihot to indices.
-        self.token_probs, self.token_indices = torch.topk(probs, self.router_topk, dim=-1)
-        # Mask the indices of dropped tokens with -1
-        if self.capacity_factor is not None:
-            mask = self.token_probs == 0
-            self.token_indices = self.token_indices.masked_fill(mask, -1)
-
-        if self.token_dispatcher is None:
-            # only construct/initialize during the first run as
-            # mbs only accessible during runtime 
-            # (not during model construction where this manager is instantiated)
-            H = self.config.hidden_size
-            L = self.config.seq_length
-            E = self.num_experts
-            K = self.config.moe_router_topk
-            EPR = self.num_local_experts
-            NRANK_EP = self.num_rank_group
-            T = self.routing_map.shape[0]
-            ilen = T*K
-            olen = int(ilen * 1.25) # int(T*K * EPR * NRANK_EP// E)  # 
-
-            self.token_dispatcher = SymmMemDispatcher(
-                                        group = self.group,
-                                        align = 1,
-                                        in_len = ilen,
-                                        out_len = olen,
-                                        token_shape = (H,),
-                                        num_ranks = NRANK_EP,
-                                        num_local_experts = EPR,
-                                        dtype = torch.bfloat16,   # TODO: hardcoded for now, need to find a way to access hidden_states
-                                        device = torch.cuda.current_device(),
-                                    )
-            self.prob_dispatcher = SymmMemDispatcher(
-                                        group = self.group,
-                                        align = 1,
-                                        in_len = ilen,
-                                        out_len = olen,
-                                        token_shape = (),
-                                        num_ranks = NRANK_EP,
-                                        num_local_experts = EPR,
-                                        dtype = probs.dtype,
-                                        device = torch.cuda.current_device(),
-                                    )
-            self.token_combiner = SymmMemCombiner(
-                                        group = self.group,
-                                        align = 1,
-                                        in_len = olen,
-                                        out_len = ilen,
-                                        token_shape = (H,),
-                                        num_ranks = NRANK_EP,
-                                        num_local_experts = EPR,
-                                        dtype = torch.bfloat16,   # TODO: hardcoded
-                                        device = torch.cuda.current_device(),
-                                    )
+        pass
 
     def dispatch(
         self,
         hidden_states: torch.Tensor,
-        probs: torch.Tensor
-        # async_finish: bool = False,
-        # allocate_on_comm_stream: bool = False,
+        probs: torch.Tensor,
+        in_splits: torch.Tensor,
+
     ) -> torch.Tensor:
-        # DeepEP only supports float32 probs
-        if self.token_probs.dtype != torch.float32:
-            if self.token_probs.dtype in [torch.bfloat16, torch.float16]:
-                logger.warning(
-                    "DeepEP only supports float32 probs, please set --moe-router-dtype=fp32"
-                )
-            self.token_probs = self.token_probs.float()  # downcast or upcast
-        # hidden_states, dispatched_indices, dispatched_probs, num_tokens_per_expert, handle = (
-        #     fused_dispatch(
-        #         hidden_states,
-        #         self.token_indices,
-        #         self.token_probs,
-        #         self.num_experts,
-        #         self.group,
-        #         async_finish=async_finish,
-        #         allocate_on_comm_stream=allocate_on_comm_stream,
-        #     )
-        # )
-        # self.handle = handle
-        # self.tokens_per_expert = num_tokens_per_expert
-        # self.dispatched_indices = dispatched_indices
-        # self.dispatched_probs = dispatched_probs
-        insplits = self.routing_map.sum(dim=0)
-        dispatched_input = self.token_dispatcher(hidden_states, insplits)
-        dispatched_probs = self.prob_dispatcher(probs, insplits)
-        return dispatched_input, dispatched_probs
+
+        dispatched_tokens, self.dispatched_tokens_so, _  = SymmMem2DA2A.apply(
+            hidden_states, in_splits, self.group_name, self.major_align,
+            self.num_local_experts, self.max_in, self.max_out,
+        )
+        
+        dispatched_probs, dispatched_probs_so, _  = SymmMem2DA2A.apply(
+            probs.unsqueeze(-1), in_splits, self.group_name, self.major_align,
+            self.num_local_experts, self.max_in, self.max_out,
+        )
+        return dispatched_tokens, dispatched_probs
 
     def _indices_to_multihot(self, indices, probs):
         """
@@ -265,19 +344,12 @@ class _SymmMemManager(_DispatchManager):
     def combine(
         self,
         hidden_states: torch.Tensor,
-        async_finish: bool = False,
-        allocate_on_comm_stream: bool = False,
     ) -> torch.Tensor:
-        # hidden_states, _ = fused_combine(
-        #     hidden_states,
-        #     self.group,
-        #     self.handle,
-        #     async_finish=async_finish,
-        #     allocate_on_comm_stream=allocate_on_comm_stream,
-        # )
-        # # Release the handle after combine operation
-        # self.handle = None
-        hidden_states = self.token_combiner(hidden_states, self.token_dispatcher._out_splits_offsets)
+
+        hidden_states, _ = SymmMem2DA2AOffset.apply(
+            hidden_states, self.dispatched_tokens_so, self.group_name, self.major_align,
+            self.max_out, self.max_in,
+        )
         return hidden_states
 
     def _pad_routing_map(
@@ -386,13 +458,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         self.local_expert_indices = local_expert_indices
         assert self.tp_size * self.ep_size > 1, "Flex token dispatcher requires TPxEP > 1"
         if self.config.moe_flex_dispatcher_backend == "torch":
-            self._comm_manager = _SymmMemManager(
-                group=self.tp_ep_group,
-                num_local_experts=self.num_local_experts,
-                router_topk=self.tp_size * self.config.moe_router_topk,
-                num_experts=self.tp_size * self.config.num_moe_experts,
-                config=self.config,
-            )
+            self._comm_manager = None # constructed on first forward since token length not available at init
             self.cudagraph_attrs = ['_comm_manager.token_probs', '_comm_manager.token_indices']
         else:
             raise ValueError(
@@ -457,31 +523,62 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         # Initialize metadata
         routing_map, probs = self._initialize_metadata(routing_map, probs)
 
-        self._comm_manager.setup_metadata(routing_map, probs)
+        # self._comm_manager.setup_metadata(routing_map, probs)
+        num_tokens = routing_map.shape[0]
+        routing_map = routing_map.reshape(num_tokens, self.config.num_moe_experts)
+        probs = probs.reshape(num_tokens, self.config.num_moe_experts)
+
+        # Convert the format of routing map from multihot to indices.
+        token_probs, token_indices = torch.topk(probs, self.config.moe_router_topk, dim=-1)
+        # Mask the indices of dropped tokens with -1
+        if self.config.moe_expert_capacity_factor is not None:
+            mask = token_probs == 0
+            token_indices = token_indices.masked_fill(mask, -1)
+
+        flat_k_eids = token_indices.reshape(-1)
+        # in_splits
+        self.ntok_per_eid = torch.bincount(flat_k_eids, minlength=self.config.num_moe_experts)
+
+        k_expanded_tok_ids_by_eid_order = flat_k_eids.argsort()
+        # for post combine unpermutation
+        self.inv_perm = k_expanded_tok_ids_by_eid_order.argsort()
+
+        tok_ids_by_eid_order = k_expanded_tok_ids_by_eid_order // self.config.moe_router_topk # T*K
+        slot_by_eid_order    = k_expanded_tok_ids_by_eid_order % self.config.moe_router_topk # T*K
+
+        permutated_tokens = hidden_states[tok_ids_by_eid_order]
+        permutated_probs = token_probs[tok_ids_by_eid_order, slot_by_eid_order]
+
+        if self._comm_manager is None:
+        #     # only construct/initialize during the first run as
+        #     # mbs only accessible during runtime 
+        #     # (not during model construction where this manager is instantiated)
+        #     H = self.config.hidden_size
+        #     L = self.config.seq_length
+        #     E = self.num_experts
+        #     K = self.config.moe_router_topk
+        #     EPR = self.num_local_experts
+        #     NRANK_EP = self.num_rank_group
+        #     T = self.routing_map.shape[0]
+        #     ilen = T*K
+        #     olen = int(ilen * 1.25) # int(T*K * EPR * NRANK_EP// E)  # 
+            self._comm_manager = _SymmMemManager(
+                group=dist.group.WORLD,
+                max_tokens_per_rank=permutated_tokens.shape[0],
+                major_align=1,
+                num_local_experts=self.num_local_experts,
+                router_topk=self.config.moe_router_topk,
+                num_experts=self.config.num_moe_experts,
+                config=self.config,
+            )
         # return hidden_states, self._comm_manager.token_probs
         assert self.config.moe_pad_expert_input_to_capacity is False, "expert_capacity unsupported yet for MoESymmMemTokenDispather"
-        (
-            permutated_local_input_tokens,
-            permuted_probs,
-            self.reversed_local_input_permutation_mapping,
-            _,
-            _,
-        ) = permute(
-            hidden_states,                         # non K-expanded
-            self._comm_manager.routing_map,
-            probs=self._comm_manager.probs,
-            num_out_tokens=self._comm_manager.routing_map.shape[0] * self.config.moe_router_topk,   # k-expanded #tokens
-            fused=self.config.moe_permute_fusion,
-            drop_and_pad=False,                    # False for now, else self.config.moe_pad_expert_input_to_capacity
-        )
-        return permutated_local_input_tokens, permuted_probs
+        return permutated_tokens, permutated_probs
 
     def token_dispatch(
         self,
         hidden_states: torch.Tensor,
         probs: Optional[torch.Tensor] = None,
-        async_finish: bool = True,
-        allocate_on_comm_stream: bool = True,
     ):
         """
         Execute fused permutation and AlltoAll communication.
@@ -500,7 +597,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             A tuple of dispatched tokens and probabilities.
         """
-        return self._comm_manager.dispatch(hidden_states, probs)
+        return self._comm_manager.dispatch(hidden_states, probs, self.ntok_per_eid)
 
     def dispatch_postprocess(self, hidden_states: torch.Tensor, probs: torch.Tensor):
         """Converts dispatched tokens to a per-expert format for expert processing.
@@ -519,12 +616,9 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         # so PyTorch has no dependency edge to it. NVSHMEM remote puts from peer ranks land
         # asynchronously; synchronize the stream here to ensure the A2A kernel (and its
         # NVSHMEM quiet/barrier) has fully completed before we read _out_splits_offsets.
-        torch.cuda.current_stream().synchronize()
-        tokens_per_expert = self._comm_manager.get_number_of_tokens_per_expert()
-        ntok = tokens_per_expert.sum().item()
-        global_input_tokens = hidden_states[:ntok] 
-        permuted_probs = probs[:ntok]
-        return global_input_tokens, tokens_per_expert, permuted_probs
+        tokens_per_expert = self._comm_manager.dispatched_tokens_so[0].view(
+                                self.num_local_experts, self._comm_manager.num_rank_group).sum(dim=1)
+        return hidden_states, tokens_per_expert, probs.squeeze()
 
     def combine_preprocess(self, hidden_states: torch.Tensor):
         """Pre-processes hidden states before combining them after expert processing.
@@ -538,8 +632,6 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
     def token_combine(
         self,
         hidden_states: torch.Tensor,
-        async_finish: bool = True,
-        allocate_on_comm_stream: bool = True,
     ):
         """Executes fused un-permutation and communication using DeepEP kernels.
 
@@ -553,7 +645,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             Combined tokens after fused un-permutation and communication.
         """
-        return self._comm_manager.combine(hidden_states, async_finish, allocate_on_comm_stream)
+        return self._comm_manager.combine(hidden_states)
 
     def combine_postprocess(self, hidden_states: torch.Tensor):
         """
@@ -568,16 +660,8 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             The final MoE layer output reshaped to its original dimensions.
         """
-        torch.distributed.barrier()
-        # output = unpermute(
-        #     permutated_local_input_tokens,
-        #     self.reversed_local_input_permutation_mapping,
-        #     restore_shape=self.hidden_shape_before_permute,
-        #     routing_map=self.routing_map,
-        #     fused=self.config.moe_permute_fusion,
-        #     drop_and_pad=self.drop_and_pad,
-        # )
-
-        # # Reshape the output tensor
         # output = output.view(self.hidden_shape)
-        return hidden_states.view(self.hidden_shape)
+        return hidden_states[self.inv_perm].reshape(
+            -1, self.config.moe_router_topk, self.hidden_shape[-1]).sum(dim=1).reshape(self.hidden_shape)
+    
+         

@@ -182,7 +182,7 @@ class BaseMoELayer(MegatronModule, ABC):
         self.router: RouterInterface = None
         self.experts = None
         self.shared_experts = None
-        self.token_dispatcher: Optional[MoETokenDispatcher] = None
+        self.token_dispatcher: MoESymmMemTokenDispatcher = None
         self.layer_number = layer_number
 
     @abstractmethod
