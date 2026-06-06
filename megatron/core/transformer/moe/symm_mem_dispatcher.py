@@ -208,7 +208,7 @@ class SymmMem2DA2AOffset(torch.autograd.Function):
 
 class _SymmMemManager(_DispatchManager):
     """
-    A manager class to handle fused all-to-all communication processes for MoE models using
+    # TODO: Revision: A manager class to handle fused all-to-all communication processes for MoE models using
     DeepEP backend. See https://github.com/deepseek-ai/deepep for more details.
 
     The workflow of the DeepEP dispatcher is:
@@ -239,7 +239,7 @@ class _SymmMemManager(_DispatchManager):
         config: TransformerConfig,
     ):
         """
-        Initialize the DeepEP dispatcher.
+        # TODO: Initialize the DeepEP dispatcher.
 
         Args:
             group (torch.distributed.ProcessGroup): The process group to use for communication.
@@ -279,155 +279,45 @@ class _SymmMemManager(_DispatchManager):
         if _torch_ver <= (2, 11):
             symm_mem.enable_symm_mem_for_group(dist.group.WORLD.group_name)
 
-
-
     def setup_metadata(self, routing_map: torch.Tensor, probs: torch.Tensor):
         pass
 
-    def dispatch(
-        self,
+    def dispatch(self,
         hidden_states: torch.Tensor,
         probs: torch.Tensor,
         in_splits: torch.Tensor,
-
     ) -> torch.Tensor:
-
+        # dispatch tokens
         dispatched_tokens, self.dispatched_tokens_so, _  = SymmMem2DA2A.apply(
             hidden_states, in_splits, self.group_name, self.major_align,
             self.num_local_experts, self.max_in, self.max_out,
         )
-        
-        dispatched_probs, dispatched_probs_so, _  = SymmMem2DA2A.apply(
+        # dispatch probs
+        dispatched_probs, _, _  = SymmMem2DA2A.apply(
             probs.unsqueeze(-1), in_splits, self.group_name, self.major_align,
             self.num_local_experts, self.max_in, self.max_out,
         )
         return dispatched_tokens, dispatched_probs
 
-    def _indices_to_multihot(self, indices, probs):
-        """
-        Converts a tensor of indices to a multihot vector.
-
-        Args:
-            indices (torch.Tensor): [num_tokens, topk] token indices, where -1 means masked out.
-            probs (torch.Tensor): [num_tokens, topk] token probabilities.
-
-        Returns:
-            A tuple of (routing_map, probs), where routing_map is the multihot vector
-            and probs is the multihot probabilities.
-        """
-        batch_size = indices.shape[0]
-        multihot_routing_map = torch.zeros(
-            (batch_size, self.num_local_experts), dtype=torch.long, device=indices.device
-        )
-
-        multihot_probs = torch.zeros(
-            (batch_size, self.num_local_experts), dtype=torch.float, device=indices.device
-        )
-
-        mask = indices != -1
-        valid_indices = indices[mask]
-        row_indices = torch.arange(batch_size, device=indices.device).repeat_interleave(
-            mask.sum(dim=1)
-        )
-        multihot_routing_map[row_indices, valid_indices] = 1
-        multihot_probs[row_indices, valid_indices] = probs[mask]
-        return multihot_routing_map.bool(), multihot_probs
-
     def get_number_of_tokens_per_expert(self) -> torch.Tensor:
-        """
-        Get the number of tokens per expert.
-        """
+        """Get the number of tokens per expert. """
         # l0_from_rank0, l0_from_rank1, ... l1_from_rank0, l1_from_rank1, 
-        return self.token_dispatcher._out_splits_offsets[0].view(self.num_local_experts, self.num_rank_group).sum(dim=1)
-         
+        return self.dispatched_tokens_so[0].view(self.num_local_experts, self.num_rank_group).sum(dim=1)
 
-    def combine(
-        self,
-        hidden_states: torch.Tensor,
-    ) -> torch.Tensor:
-
+    def combine(self, hidden_states: torch.Tensor) -> torch.Tensor:
         hidden_states, _ = SymmMem2DA2AOffset.apply(
             hidden_states, self.dispatched_tokens_so, self.group_name, self.major_align,
             self.max_out, self.max_in,
         )
         return hidden_states
 
-    def _pad_routing_map(
-        self, routing_map: torch.Tensor, tokens_per_expert: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Pad the routing map to the nearest multiple of the pad_multiple.
-        """
-        pad_multiple = get_align_size_for_quantization(self.config)
-
-        num_input_tokens = routing_map.shape[0]
-        target_tokens_per_expert = (
-            torch.ceil(tokens_per_expert / pad_multiple) * pad_multiple
-        ).long()
-
-        # Check if there are enough tokens to pad
-        enough_tokens_to_pad = torch.all(target_tokens_per_expert <= num_input_tokens)
-        if not enough_tokens_to_pad:
-            logger.warning(
-                "Not enough tokens to pad. The total number of tokens received in this rank "
-                "is smaller than the target number of tokens for each expert. "
-                "Falling back to explicit padding within GroupedMLP"
-            )
-        else:
-            if is_experimental_enabled() and self.permute_fusion:
-                from megatron.core.fusions.fused_pad_routing_map import fused_pad_routing_map
-
-                routing_map = fused_pad_routing_map(routing_map, pad_multiple)
-            else:
-                routing_map = pad_routing_map(routing_map, pad_multiple)
-            tokens_per_expert = target_tokens_per_expert
-        return routing_map, tokens_per_expert
-
     def get_permuted_hidden_states_by_experts(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        if is_experimental_enabled() and self.permute_fusion:
-            self.dispatched_routing_map, self.dispatched_probs = fused_indices_to_multihot(
-                self.dispatched_indices, self.dispatched_probs, self.num_local_experts
-            )
-        else:
-            self.dispatched_routing_map, self.dispatched_probs = self._indices_to_multihot(
-                self.dispatched_indices, self.dispatched_probs
-            )
-        if self.config.moe_router_padding_for_quantization:
-            self.dispatched_routing_map, self.tokens_per_expert = self._pad_routing_map(
-                self.dispatched_routing_map, self.tokens_per_expert
-            )
-
-        self.hidden_shape_before_permute = hidden_states.shape
-        assert self.dispatched_probs.dtype == torch.float32, "DeepEP only supports float32 probs"
-        (
-            hidden_states,
-            permuted_probs,
-            self.reversed_mapping_for_combine,
-            self.pad_offsets,
-            self.tokens_per_expert,
-        ) = permute(
-            hidden_states,
-            self.dispatched_routing_map,
-            probs=self.dispatched_probs,
-            num_out_tokens=self.tokens_per_expert.sum().item(),
-            fused=self.permute_fusion,
-            tokens_per_expert=self.tokens_per_expert,
-            align_size=get_align_size_for_quantization(self.config),
-        )
-        if self.router_dtype == "fp64":
-            permuted_probs = permuted_probs.to(torch.float64)
-        return hidden_states, permuted_probs
+        raise NotImplementedError("Not intended for _SymmMemManager; " \
+        "symm_mem.all_to_all_vdev_2d (dispatch) has already produced the permuted hidden states")
 
     def get_restored_hidden_states_by_experts(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        hidden_states = unpermute(
-            hidden_states,
-            self.reversed_mapping_for_combine,
-            restore_shape=self.hidden_shape_before_permute,
-            routing_map=self.dispatched_routing_map,
-            fused=self.permute_fusion,
-            pad_offsets=self.pad_offsets,
-        )
-        return hidden_states
+        raise NotImplementedError("Not intended for _SymmMemManager; " \
+        "symm_mem.all_to_all_vdev_2d_offset (combine) does not expect to dest-expert major restored order")
 
 
 class MoESymmMemTokenDispatcher(MoETokenDispatcher):
@@ -612,12 +502,7 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         Returns:
             A tuple of permuted tokens, token counts per expert, and permuted probabilities.
         """
-        # _out_splits_offsets is written as a side-effect of all_to_all_vdev_2d (not returned),
-        # so PyTorch has no dependency edge to it. NVSHMEM remote puts from peer ranks land
-        # asynchronously; synchronize the stream here to ensure the A2A kernel (and its
-        # NVSHMEM quiet/barrier) has fully completed before we read _out_splits_offsets.
-        tokens_per_expert = self._comm_manager.dispatched_tokens_so[0].view(
-                                self.num_local_experts, self._comm_manager.num_rank_group).sum(dim=1)
+        tokens_per_expert =self._comm_manager.get_number_of_tokens_per_expert()
         return hidden_states, tokens_per_expert, probs.squeeze()
 
     def combine_preprocess(self, hidden_states: torch.Tensor):
@@ -626,6 +511,8 @@ class MoESymmMemTokenDispatcher(MoETokenDispatcher):
         This method restores the hidden states to their original ordering before expert processing
         by using the communication manager's restoration function.
         """
+        # Intentional left the following as commented
+        # get_restored_hidden_states_by_experts would just a forwarding method, avoding it to minimize overhead
         # hidden_states = self._comm_manager.get_restored_hidden_states_by_experts(hidden_states)
         return hidden_states
 
