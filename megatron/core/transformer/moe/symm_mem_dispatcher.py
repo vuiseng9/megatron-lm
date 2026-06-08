@@ -87,13 +87,14 @@ class SymmMem2DA2A(torch.autograd.Function):
         )
 
         # Per-expert padded sizes -> grouped_mm group offsets; total_padded == used rows.
-        recv = out_so[0]                                  # [E] expert-major true splits
-        per_pad = torch.clamp(
-            (recv.view(n_local_experts, ws).sum(dim=1) + major_align - 1)
-            // major_align * major_align,
-            min=major_align,
-        )
-        offs = per_pad.cumsum(0).to(torch.int32)          # [n_local_experts]
+        # recv = out_so[0]                                  # [E] expert-major true splits
+        # per_pad = torch.clamp(
+        #     (recv.view(n_local_experts, ws).sum(dim=1) + major_align - 1)
+        #     // major_align * major_align,
+        #     min=major_align,
+        # )
+        # offs = per_pad.cumsum(0).to(torch.int32)          # [n_local_experts]
+        offs = out_so[0].view(n_local_experts, ws).sum(dim=1).cumsum(0).to(torch.int32)
         total_padded = int(offs[-1].item())
 
         ctx.symm_mem_pool = symm_mem_pool
@@ -261,7 +262,7 @@ class _SymmMemManager(_DispatchManager):
         self.num_local_experts = num_local_experts
         self.config = config
 
-        self.major_align = major_align
+        self.major_align = 1
         self.max_in = max_tokens_per_rank
         self.max_out = (
             2 * max_tokens_per_rank + (num_local_experts + 1) * major_align
