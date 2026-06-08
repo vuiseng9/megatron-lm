@@ -73,11 +73,11 @@ class SymmMem2DA2A(torch.autograd.Function):
         ws = E // n_local_experts
 
         with torch.cuda.use_mem_pool(symm_mem_pool):
-            inp_symm = torch.empty(max_in_numel, H, dtype=inp.dtype, device=device).zero_()
+            inp_symm = torch.empty(max_in_numel, H, dtype=inp.dtype, device=device)
             inp_symm[: inp.shape[0]].copy_(inp)
             in_splits_symm = torch.empty(E, dtype=torch.int64, device=device).copy_(in_splits)
-            out_symm = torch.empty(max_out_numel, H, dtype=inp.dtype, device=device).zero_()
-            out_so = torch.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
+            out_symm = torch.empty(max_out_numel, H, dtype=inp.dtype, device=device)
+            out_so = torch.empty((2, E), dtype=torch.int64, device=device)
 
         torch.cuda.synchronize(device)
         dist.barrier()
@@ -114,12 +114,12 @@ class SymmMem2DA2A(torch.autograd.Function):
 
         # backward == COMBINE(grad_out): expert-major padded -> rank-major dense.
         with torch.cuda.use_mem_pool(ctx.symm_mem_pool):
-            g_symm = torch.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device).zero_()
+            g_symm = torch.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device)
             g_symm[: grad_out.shape[0]].copy_(grad_out)
             in_so = torch.empty((2, E), dtype=torch.int64, device=device).copy_(out_so)
-            grad_inp_symm = torch.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device).zero_()
-            out_so_bwd = torch.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
-
+            grad_inp_symm = torch.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device)
+            out_so_bwd = torch.empty((2, E), dtype=torch.int64, device=device)
+            
         torch.cuda.synchronize(device)
         dist.barrier()
 
@@ -155,12 +155,12 @@ class SymmMem2DA2AOffset(torch.autograd.Function):
 
         # Stage the differentiable inputs into constant-size symmetric buffers.
         with torch.cuda.use_mem_pool(symm_mem_pool):
-            inp_symm = torch.empty(max_in_numel, H, dtype=inp.dtype, device=device).zero_()
+            inp_symm = torch.empty(max_in_numel, H, dtype=inp.dtype, device=device)
             inp_symm[: inp.shape[0]].copy_(inp)
             in_so = torch.empty((2, E), dtype=torch.int64, device=device)
             in_so.copy_(in_splits_offsets)
-            out_symm = torch.empty(max_out_numel, H, dtype=inp.dtype, device=device).zero_()
-            out_so = torch.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
+            out_symm = torch.empty(max_out_numel, H, dtype=inp.dtype, device=device)
+            out_so = torch.empty((2, E), dtype=torch.int64, device=device)
 
         torch.cuda.synchronize(device)
         dist.barrier()
@@ -191,11 +191,11 @@ class SymmMem2DA2AOffset(torch.autograd.Function):
 
         # backward == DISPATCH(grad_out): rank-major dense -> expert-major padded.
         with torch.cuda.use_mem_pool(ctx.symm_mem_pool):
-            g_symm = torch.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device).zero_()
+            g_symm = torch.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device)
             g_symm[: grad_out.shape[0]].copy_(grad_out)
             in_splits = torch.empty(E, dtype=torch.int64, device=device).copy_(rank_major_splits)
-            grad_inp_symm = torch.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device).zero_()
-            bwd_so = torch.empty((2, E), dtype=torch.int64, device=device).fill_(-1)
+            grad_inp_symm = torch.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device)
+            bwd_so = torch.empty((2, E), dtype=torch.int64, device=device)
 
         torch.cuda.synchronize(device)
         dist.barrier()
