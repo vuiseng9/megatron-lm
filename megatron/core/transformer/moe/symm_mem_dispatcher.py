@@ -101,22 +101,21 @@ class SymmMem2DA2A(torch.autograd.Function):
         ctx.max_in_numel = max_in_numel
         ctx.max_out_numel = max_out_numel
         ctx.in_shape = tuple(inp.shape)
-        ctx.save_for_backward(out_so.detach().clone())    # the padded layout grad_out lives in
+        ctx.save_for_backward(out_so)    # the padded layout grad_out lives in
 
-        return out_symm[:total_padded].clone(), out_so.detach().clone(), offs.detach().clone()
+        return out_symm[:total_padded], out_so, offs
 
     @staticmethod
     def backward(ctx, grad_out, _grad_so, _grad_offs):
         # grad_out : [total_padded, H] grad wrt the (expert-major, padded) output.
-        (out_so,) = ctx.saved_tensors
+        (in_so,) = ctx.saved_tensors
         device, H = grad_out.device, grad_out.shape[1]
-        E = out_so.shape[1]
+        E = in_so.shape[1]
 
         # backward == COMBINE(grad_out): expert-major padded -> rank-major dense.
         with torch.cuda.use_mem_pool(ctx.symm_mem_pool):
             g_symm = torch.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device)
             g_symm[: grad_out.shape[0]].copy_(grad_out)
-            in_so = torch.empty((2, E), dtype=torch.int64, device=device).copy_(out_so)
             grad_inp_symm = torch.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device)
             out_so_bwd = torch.empty((2, E), dtype=torch.int64, device=device)
             
@@ -128,7 +127,7 @@ class SymmMem2DA2A(torch.autograd.Function):
         )
 
         m = ctx.in_shape[0]
-        grad_inp = grad_inp_symm[:m].clone()
+        grad_inp = grad_inp_symm[:m]
         # grads for: inp, in_splits, group_name, major_align, n_local_experts, max_in_numel, max_out_numel
         return grad_inp, None, None, None, None, None, None, None
 
@@ -178,22 +177,21 @@ class SymmMem2DA2AOffset(torch.autograd.Function):
         ctx.max_in_numel = max_in_numel
         ctx.max_out_numel = max_out_numel
         ctx.in_shape = tuple(inp.shape)
-        ctx.save_for_backward(out_so[0].detach().clone())
+        ctx.save_for_backward(out_so)
 
-        return out_symm[:out_numel].clone(), out_so.detach().clone()
+        return out_symm[:out_numel], out_so
 
     @staticmethod
     def backward(ctx, grad_out, _grad_out_so):
         # grad_out : [out_numel, H] grad wrt the (rank-major, dense) combine output.
-        (rank_major_splits,) = ctx.saved_tensors
+        (in_so,) = ctx.saved_tensors
         device, H = grad_out.device, grad_out.shape[1]
-        E = rank_major_splits.shape[0]
+        E = in_so.shape[1]
 
         # backward == DISPATCH(grad_out): rank-major dense -> expert-major padded.
         with torch.cuda.use_mem_pool(ctx.symm_mem_pool):
             g_symm = torch.empty(ctx.max_out_numel, H, dtype=grad_out.dtype, device=device)
             g_symm[: grad_out.shape[0]].copy_(grad_out)
-            in_splits = torch.empty(E, dtype=torch.int64, device=device).copy_(rank_major_splits)
             grad_inp_symm = torch.empty(ctx.max_in_numel, H, dtype=grad_out.dtype, device=device)
             bwd_so = torch.empty((2, E), dtype=torch.int64, device=device)
 
@@ -201,12 +199,12 @@ class SymmMem2DA2AOffset(torch.autograd.Function):
         dist.barrier()
 
         torch.ops.symm_mem.all_to_all_vdev_2d(
-            g_symm, grad_inp_symm, in_splits, bwd_so, ctx.group_name,
+            g_symm, grad_inp_symm, in_so[0], bwd_so, ctx.group_name,
             major_align=ctx.major_align,
         )
 
         m = ctx.in_shape[0]
-        grad_inp = grad_inp_symm[:m].clone()  # padding rows stay 0 -> 0 grad, as required
+        grad_inp = grad_inp_symm[:m]  # padding rows stay 0 -> 0 grad, as required
         # grads for: inp, in_splits_offsets, group_name, major_align, max_in_numel, max_out_numel
         return grad_inp, None, None, None, None, None, None
 
